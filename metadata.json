@@ -1,0 +1,8 @@
+{
+  "name": "Copy of AgriChain - Blockchain Supply Chain",
+  "description": "A blockchain-powered agricultural supply chain tracking system with QR code traceability and multi-role authentication.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ]
+}
