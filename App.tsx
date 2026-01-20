@@ -7,7 +7,6 @@ import FarmerDashboard from './pages/FarmerDashboard';
 import DistributorDashboard from './pages/DistributorDashboard';
 import RetailerDashboard from './pages/RetailerDashboard';
 import CustomerTrace from './pages/CustomerTrace';
-import ChatBot from './components/ChatBot';
 import { LogOut, Package, User, ShoppingCart, Truck, Search } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -114,8 +113,6 @@ const App: React.FC = () => {
           </div>
         )}
       </main>
-
-      <ChatBot />
 
       <footer className="bg-white border-t py-8">
         <div className="max-w-7xl mx-auto px-4 text-center">
