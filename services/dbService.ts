@@ -1,44 +1,112 @@
 
 import { Batch, BatchEvent, TraceData } from '../types';
-
-const BATCHES_KEY = 'agrichain_batches';
-const EVENTS_KEY = 'agrichain_events';
+import { supabase } from './supabase';
 
 export const dbService = {
-  getBatches: (): Batch[] => {
-    const data = localStorage.getItem(BATCHES_KEY);
-    return data ? JSON.parse(data) : [];
+  getBatches: async (): Promise<Batch[]> => {
+    const { data, error } = await supabase
+      .from('batches')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error("Fetch Batches Error:", error);
+      throw new Error(error.message);
+    }
+    return data.map(b => ({
+      ...b,
+      farmerId: b.farmer_id,
+      seedType: b.seed_type,
+      harvestDate: b.harvest_date,
+      createdAt: new Date(b.created_at).getTime()
+    }));
   },
 
-  getBatch: (id: string): Batch | undefined => {
-    return dbService.getBatches().find((b) => b.id === id);
+  getBatch: async (id: string): Promise<Batch | undefined> => {
+    const { data, error } = await supabase
+      .from('batches')
+      .select('*')
+      .eq('id', id)
+      .single();
+    
+    if (error) return undefined;
+    return {
+      ...data,
+      farmerId: data.farmer_id,
+      seedType: data.seed_type,
+      harvestDate: data.harvest_date,
+      createdAt: new Date(data.created_at).getTime()
+    };
   },
 
   createBatch: async (batch: Batch): Promise<void> => {
-    const batches = dbService.getBatches();
-    batches.push(batch);
-    localStorage.setItem(BATCHES_KEY, JSON.stringify(batches));
+    const { error } = await supabase
+      .from('batches')
+      .insert([{
+        id: batch.id,
+        farmer_id: batch.farmerId,
+        crop: batch.crop,
+        seed_type: batch.seedType,
+        quantity: batch.quantity,
+        harvest_date: batch.harvestDate,
+        location: batch.location
+      }]);
+    
+    if (error) {
+      console.error("Create Batch Error:", error);
+      throw new Error(`Blockchain Entry Failed: ${error.message}`);
+    }
   },
 
-  getEvents: (batchId?: string): BatchEvent[] => {
-    const data = localStorage.getItem(EVENTS_KEY);
-    const allEvents: BatchEvent[] = data ? JSON.parse(data) : [];
+  getEvents: async (batchId?: string): Promise<BatchEvent[]> => {
+    let query = supabase.from('events').select('*');
     if (batchId) {
-      return allEvents.filter((e) => e.batchId === batchId);
+      query = query.eq('batch_id', batchId);
     }
-    return allEvents;
+    
+    const { data, error } = await query.order('timestamp', { ascending: true });
+    if (error) throw error;
+    
+    return data.map(e => ({
+      id: e.id,
+      batchId: e.batch_id,
+      role: e.role,
+      userName: e.user_name,
+      timestamp: e.timestamp,
+      latitude: e.latitude,
+      longitude: e.longitude,
+      details: e.details,
+      dataHash: e.data_hash,
+      txHash: e.tx_hash
+    }));
   },
 
   addEvent: async (event: BatchEvent): Promise<void> => {
-    const events = dbService.getEvents();
-    events.push(event);
-    localStorage.setItem(EVENTS_KEY, JSON.stringify(events));
+    const { error } = await supabase
+      .from('events')
+      .insert([{
+        id: event.id,
+        batch_id: event.batchId,
+        role: event.role,
+        user_name: event.userName,
+        timestamp: event.timestamp,
+        latitude: event.latitude,
+        longitude: event.longitude,
+        details: event.details,
+        data_hash: event.dataHash,
+        tx_hash: event.txHash
+      }]);
+    
+    if (error) {
+      console.error("Add Event Error:", error);
+      throw new Error(`Event Audit Log Failed: ${error.message}`);
+    }
   },
 
   getTraceData: async (batchId: string): Promise<TraceData | null> => {
-    const batch = dbService.getBatch(batchId);
+    const batch = await dbService.getBatch(batchId);
     if (!batch) return null;
-    const events = dbService.getEvents(batchId).sort((a, b) => a.timestamp - b.timestamp);
+    const events = await dbService.getEvents(batchId);
     return { batch, events };
   }
 };

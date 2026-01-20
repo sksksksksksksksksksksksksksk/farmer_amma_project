@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { UserProfile, Batch, UserRole, BatchEvent } from '../types';
 import { dbService } from '../services/dbService';
 import { blockchainService } from '../services/blockchainService';
-import { Plus, CheckCircle2, ChevronRight, QrCode, X, Download, Printer, ShieldCheck, Copy, Check, Share2, Leaf, ExternalLink } from 'lucide-react';
+import { Plus, CheckCircle2, ChevronRight, QrCode, X, Download, Printer, ShieldCheck, Copy, Check, Share2, Leaf, ExternalLink, Loader2, Upload } from 'lucide-react';
 
 interface FarmerDashboardProps {
   user: UserProfile;
@@ -14,6 +14,7 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
   const [batches, setBatches] = useState<Batch[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [fetching, setFetching] = useState(true);
   const [selectedBatchQR, setSelectedBatchQR] = useState<Batch | null>(null);
   const [copied, setCopied] = useState(false);
   const [formData, setFormData] = useState({
@@ -24,7 +25,15 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
   });
 
   useEffect(() => {
-    setBatches(dbService.getBatches().filter(b => b.farmerId === user.uid));
+    const fetchBatches = async () => {
+      try {
+        const data = await dbService.getBatches();
+        setBatches(data.filter(b => b.farmerId === user.uid));
+      } finally {
+        setFetching(false);
+      }
+    };
+    fetchBatches();
   }, [user.uid]);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -118,7 +127,6 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
 
   return (
     <div className="space-y-12 pb-24">
-      {/* Hidden Print Manifest Template */}
       <div id="print-label" className="hidden print:block print:p-20 bg-white">
         {selectedBatchQR && (
           <div className="border-[12px] border-black p-16 text-center space-y-12">
@@ -224,50 +232,55 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
         </div>
       )}
 
-      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-12">
-        {batches.map((batch, idx) => (
-          <div key={batch.id} className={`bg-white rounded-[4rem] border border-gray-100 overflow-hidden shadow-xl hover:shadow-[0_40px_80px_-15px_rgba(0,0,0,0.12)] transition-all duration-700 group animate-spring stagger-${(idx % 4) + 1}`}>
-            <div className="p-12">
-              <div className="flex justify-between items-start mb-12">
-                <div>
-                  <h3 className="font-black text-4xl text-gray-900 uppercase tracking-tighter mb-2 group-hover:text-green-600 transition-colors leading-none">{batch.crop}</h3>
-                  <div className="flex items-center space-x-2">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                    <p className="text-[10px] text-gray-400 font-black tracking-widest uppercase">CHAIN-ID: {batch.id}</p>
+      {fetching ? (
+        <div className="text-center py-20">
+           <Loader2 className="animate-spin h-16 w-16 text-green-600 mx-auto" />
+           <p className="mt-6 font-black uppercase text-xs text-gray-400 tracking-widest">Querying Supabase...</p>
+        </div>
+      ) : (
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-12">
+          {batches.map((batch, idx) => (
+            <div key={batch.id} className={`bg-white rounded-[4rem] border border-gray-100 overflow-hidden shadow-xl hover:shadow-[0_40px_80px_-15px_rgba(0,0,0,0.12)] transition-all duration-700 group animate-spring stagger-${(idx % 4) + 1}`}>
+              <div className="p-12">
+                <div className="flex justify-between items-start mb-12">
+                  <div>
+                    <h3 className="font-black text-4xl text-gray-900 uppercase tracking-tighter mb-2 group-hover:text-green-600 transition-colors leading-none">{batch.crop}</h3>
+                    <div className="flex items-center space-x-2">
+                      <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                      <p className="text-[10px] text-gray-400 font-black tracking-widest uppercase">CHAIN-ID: {batch.id}</p>
+                    </div>
+                  </div>
+                  <div className="bg-green-50 p-4 rounded-3xl text-green-600 shadow-inner">
+                    <CheckCircle2 size={32} />
                   </div>
                 </div>
-                <div className="bg-green-50 p-4 rounded-3xl text-green-600 shadow-inner">
-                  <CheckCircle2 size={32} />
+                
+                <div className="flex items-center space-x-4">
+                  <button 
+                    onClick={() => onTrace(batch.id)}
+                    className="flex-grow py-7 bg-gray-900 text-white rounded-[2rem] font-black uppercase text-xs tracking-[0.3em] hover:bg-black transition-all shadow-xl active:scale-95"
+                  >
+                    History
+                  </button>
+                  <button 
+                    onClick={() => setSelectedBatchQR(batch)}
+                    className="p-7 bg-green-50 text-green-600 rounded-[2rem] hover:bg-green-600 hover:text-white transition-all shadow-xl shadow-green-100/50 active:scale-95"
+                  >
+                    <QrCode size={28} />
+                  </button>
                 </div>
               </div>
-              
-              <div className="flex items-center space-x-4">
-                <button 
-                  onClick={() => onTrace(batch.id)}
-                  className="flex-grow py-7 bg-gray-900 text-white rounded-[2rem] font-black uppercase text-xs tracking-[0.3em] hover:bg-black transition-all shadow-xl active:scale-95"
-                >
-                  History
-                </button>
-                <button 
-                  onClick={() => setSelectedBatchQR(batch)}
-                  className="p-7 bg-green-50 text-green-600 rounded-[2rem] hover:bg-green-600 hover:text-white transition-all shadow-xl shadow-green-100/50 active:scale-95"
-                >
-                  <QrCode size={28} />
-                </button>
-              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
-      {/* REINFORCED QR MANIFEST MODAL */}
       {selectedBatchQR && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-xl animate-in fade-in duration-500">
            <div className="absolute inset-0" onClick={() => setSelectedBatchQR(null)}></div>
            
            <div className="relative bg-white w-full max-w-2xl rounded-[5rem] shadow-[0_100px_200px_rgba(0,0,0,0.6)] overflow-hidden animate-spring flex flex-col max-h-[95vh]">
              
-             {/* Header Section */}
              <div className="flex justify-between items-center px-14 py-10 bg-gray-50/50 border-b border-gray-100 flex-shrink-0">
                 <div className="flex items-center space-x-5 text-green-600">
                    <ShieldCheck size={40} className="animate-pulse" />
@@ -284,11 +297,8 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
                 </button>
              </div>
 
-             {/* Content Area with Custom Scrollbar */}
              <div className="p-14 overflow-y-auto flex-grow">
                 <div className="flex flex-col items-center text-center">
-                   
-                   {/* Cinematic QR Container */}
                    <div className="relative mb-14 group/qr">
                       <div className="p-12 bg-white rounded-[5rem] border-[12px] border-green-600/5 shadow-[0_40px_80px_-15px_rgba(0,0,0,0.15)] group-hover/qr:scale-105 transition-all duration-700">
                          <img 
@@ -303,7 +313,6 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
                       <div className="absolute -bottom-6 -right-6 w-20 h-20 border-b-[10px] border-r-[10px] border-green-500 rounded-br-[3rem]"></div>
                    </div>
 
-                   {/* Information Block */}
                    <div className="mb-14 space-y-6">
                       <h3 className="text-7xl font-black text-gray-900 uppercase tracking-tighter leading-none mb-4">{selectedBatchQR.crop}</h3>
                       <div className="flex items-center justify-center space-x-4 bg-gray-50 px-12 py-6 rounded-[2.5rem] mx-auto border border-gray-100 w-fit shadow-inner group/copy">
@@ -314,7 +323,6 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
                       </div>
                    </div>
 
-                   {/* CORE ACTION AREA - MUST BE VISIBLE */}
                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 w-full">
                       <button 
                         onClick={() => handleDownloadQR(selectedBatchQR)}
@@ -333,7 +341,7 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
                    </div>
                    
                    <p className="mt-14 text-[10px] font-black text-gray-300 uppercase tracking-[0.6em] animate-pulse">
-                      Distributed Ledger Signature • AgriChain Protocol
+                      Supabase Cloud Sync • AgriChain Protocol
                    </p>
                 </div>
              </div>

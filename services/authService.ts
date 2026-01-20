@@ -1,60 +1,97 @@
 
+import { auth } from './firebase';
+import { supabase } from './supabase';
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 import { UserProfile, UserRole } from '../types';
 
 const AUTH_KEY = 'agrichain_auth_session';
-const USERS_DB_KEY = 'agrichain_users_db';
 
 export const authService = {
-  getUsers: (): UserProfile[] => {
-    const data = localStorage.getItem(USERS_DB_KEY);
-    return data ? JSON.parse(data) : [];
-  },
-
   getCurrentUser: (): UserProfile | null => {
     const data = localStorage.getItem(AUTH_KEY);
     return data ? JSON.parse(data) : null;
   },
 
   signup: async (name: string, email: string, role: UserRole): Promise<UserProfile> => {
-    // Artificial delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    const password = "agrichain_secure_node_123"; 
     
-    const users = authService.getUsers();
-    if (users.find(u => u.email === email)) {
-      throw new Error("A user with this email already exists.");
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const firebaseUser = userCredential.user;
+
+      // Sync with Supabase Profiles
+      // CRITICAL: Ensure the 'profiles' table in Supabase has 'id' set to type 'TEXT', not 'UUID'.
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .upsert({
+          id: firebaseUser.uid,
+          email: email,
+          role: role,
+          name: name
+        });
+
+      if (profileError) {
+        console.error("Supabase Profile Sync Detail:", profileError);
+        throw new Error(profileError.message || "Failed to sync profile to database. Check if table exists.");
+      }
+
+      const newUser: UserProfile = {
+        uid: firebaseUser.uid,
+        email,
+        role,
+        name,
+      };
+
+      localStorage.setItem(AUTH_KEY, JSON.stringify(newUser));
+      return newUser;
+    } catch (err: any) {
+      console.error("Signup Error:", err);
+      throw err;
     }
-
-    const newUser: UserProfile = {
-      uid: Math.random().toString(36).substr(2, 9),
-      email,
-      role,
-      name,
-    };
-
-    users.push(newUser);
-    localStorage.setItem(USERS_DB_KEY, JSON.stringify(users));
-    localStorage.setItem(AUTH_KEY, JSON.stringify(newUser));
-    return newUser;
   },
 
   login: async (email: string, role: UserRole): Promise<UserProfile> => {
-    // Artificial delay
-    await new Promise(resolve => setTimeout(resolve, 800));
+    const password = "agrichain_secure_node_123"; 
     
-    const users = authService.getUsers();
-    let user = users.find(u => u.email === email && u.role === role);
-    
-    // For this demo, if user doesn't exist, we'll auto-create or throw. 
-    // To satisfy the "new user creating" request, we should favor the signup flow.
-    if (!user) {
-      throw new Error("User not found. Please create an account first.");
-    }
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const firebaseUser = userCredential.user;
 
-    localStorage.setItem(AUTH_KEY, JSON.stringify(user));
-    return user;
+      // Fetch role and name from Supabase
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', firebaseUser.uid)
+        .eq('role', role)
+        .single();
+      
+      if (profileError || !profile) {
+        console.error("Supabase Login Fetch Error:", profileError);
+        await signOut(auth);
+        throw new Error(profileError?.message || "Access Denied: Role not found in decentralized registry.");
+      }
+
+      const user: UserProfile = {
+        uid: firebaseUser.uid,
+        email: profile.email,
+        role: profile.role,
+        name: profile.name,
+      };
+
+      localStorage.setItem(AUTH_KEY, JSON.stringify(user));
+      return user;
+    } catch (err: any) {
+      console.error("Login Error:", err);
+      throw err;
+    }
   },
 
-  logout: () => {
+  logout: async () => {
+    await signOut(auth);
     localStorage.removeItem(AUTH_KEY);
   }
 };
