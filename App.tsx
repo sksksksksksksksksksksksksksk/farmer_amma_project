@@ -7,6 +7,7 @@ import FarmerDashboard from './pages/FarmerDashboard';
 import DistributorDashboard from './pages/DistributorDashboard';
 import RetailerDashboard from './pages/RetailerDashboard';
 import CustomerTrace from './pages/CustomerTrace';
+import ChatBot from './components/ChatBot';
 import { LogOut, Package, User, ShoppingCart, Truck, Search } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -21,7 +22,6 @@ const App: React.FC = () => {
       setView('dashboard');
     }
 
-    // Handle hash routing for QR scans (e.g., /#trace/123)
     const handleHashChange = () => {
       const hash = window.location.hash;
       if (hash.startsWith('#trace/')) {
@@ -56,7 +56,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Navigation Header */}
       <header className="bg-white border-b sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div 
@@ -72,7 +71,7 @@ const App: React.FC = () => {
           <nav className="flex items-center space-x-4">
             <button 
               onClick={() => setView('trace')}
-              className="hidden md:flex items-center space-x-1 text-gray-600 hover:text-green-600 px-3 py-2 rounded-md font-medium"
+              className="hidden md:flex items-center space-x-1 text-gray-600 hover:text-green-600 px-3 py-2 rounded-md font-medium transition-colors"
             >
               <Search size={18} />
               <span>Trace Batch</span>
@@ -86,7 +85,7 @@ const App: React.FC = () => {
                 </div>
                 <button 
                   onClick={handleLogout}
-                  className="flex items-center space-x-1 text-red-600 hover:bg-red-50 px-3 py-2 rounded-md font-medium"
+                  className="flex items-center space-x-1 text-red-600 hover:bg-red-50 px-3 py-2 rounded-md font-medium transition-colors"
                 >
                   <LogOut size={18} />
                   <span className="hidden sm:inline">Logout</span>
@@ -104,7 +103,6 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="flex-grow">
         {view === 'landing' && <LandingPage onLogin={handleLogin} />}
         {view === 'trace' && <CustomerTrace batchId={traceId} />}
@@ -117,7 +115,8 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {/* Footer */}
+      <ChatBot />
+
       <footer className="bg-white border-t py-8">
         <div className="max-w-7xl mx-auto px-4 text-center">
           <p className="text-gray-500 text-sm">© 2024 AgriChain Protocol. Powered by Web3 & Transparency.</p>
