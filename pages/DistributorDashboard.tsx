@@ -130,19 +130,17 @@ const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTra
     e.preventDefault();
     if (!batchId) return;
 
-    const batch = dbService.getBatch(batchId);
-    if (!batch) {
-      alert("CRITICAL ERROR: Asset ID not found in decentralized registry.");
-      return;
-    }
-
     setLoading(true);
     try {
-      const timestamp = Date.now();
-      const currentLat = location?.lat || null;
-      const currentLng = location?.lng || null;
+      // Refresh location precisely for the event record
+      const pos: any = await new Promise((res, rej) => 
+        navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 5000 })
+      );
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
 
-      const eventData = { batchId, ...formData, lat: currentLat, lng: currentLng, timestamp, type: 'TRANSIT' };
+      const timestamp = Date.now();
+      const eventData = { batchId, ...formData, lat, lng, timestamp, type: 'TRANSIT' };
       const dataHash = blockchainService.generateDataHash(eventData);
       const txHash = await blockchainService.submitToBlockchain(dataHash);
 
@@ -152,12 +150,12 @@ const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTra
         role: UserRole.DISTRIBUTOR,
         userName: user.name,
         timestamp,
-        latitude: currentLat,
-        longitude: currentLng,
+        latitude: lat,
+        longitude: lng,
         details: { 
           action: 'Logistics Custody Transferred',
           ...formData,
-          automatedSync: true
+          gpsProof: `${lat.toFixed(6)}, ${lng.toFixed(6)}`
         },
         dataHash,
         txHash
@@ -166,6 +164,9 @@ const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTra
       await dbService.addEvent(event);
       setSuccess(batchId);
       setBatchId('');
+      alert("Logistics node verified and stored in Supabase with GPS coordinates.");
+    } catch (err: any) {
+      alert("Submission failed. Please ensure GPS is enabled for audit trail.");
     } finally {
       setLoading(false);
     }
@@ -206,7 +207,6 @@ const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTra
           <div id="scanner-container" className="absolute inset-0 w-full h-full [&>div]:border-none [&_video]:object-cover opacity-80"></div>
 
           <div className="absolute inset-0 pointer-events-none z-20">
-             <div className={`absolute left-0 w-full h-1 bg-green-500 shadow-[0_0_25px_#22c55e] transition-all duration-300 ${scanHighlight ? 'opacity-0' : 'animate-scan opacity-70'}`}></div>
              <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 border-2 rounded-[4rem] flex items-center justify-center transition-all duration-500 ${scanHighlight ? 'border-white bg-green-500/20 scale-110' : 'border-white/10'}`}>
                 <div className={`absolute -top-4 -left-4 w-16 h-16 border-t-8 border-l-8 rounded-tl-3xl transition-colors duration-300 ${scanHighlight ? 'border-white' : 'border-green-500'}`}></div>
                 <div className={`absolute -top-4 -right-4 w-16 h-16 border-t-8 border-r-8 rounded-tr-3xl transition-colors duration-300 ${scanHighlight ? 'border-white' : 'border-green-500'}`}></div>
@@ -235,25 +235,20 @@ const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTra
             </div>
             <div>
                <h2 className="text-3xl font-black text-gray-900 uppercase tracking-tighter">Manifest Sync</h2>
-               <p className="text-gray-400 font-bold text-xs uppercase tracking-widest">Digital Custody Seal</p>
+               <p className="text-gray-400 font-bold text-xs uppercase tracking-widest">Digital GPS Custody Seal</p>
             </div>
           </div>
 
           <form onSubmit={handleAutomatedSubmit} className="space-y-8 flex-grow">
             <div>
               <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.3em] mb-3 ml-2">Detected Asset ID</label>
-              <div className="relative group">
-                <input 
-                  required
-                  value={batchId}
-                  onChange={(e) => setBatchId(e.target.value.toUpperCase())}
-                  placeholder="AUTO-FILL ON SCAN"
-                  className={`w-full px-8 py-6 border-2 transition-all font-mono font-bold text-xl uppercase placeholder:text-gray-200 outline-none rounded-[1.8rem] ${scanHighlight ? 'border-green-500 bg-green-50' : 'border-transparent bg-gray-50 focus:border-blue-500'}`}
-                />
-                <div className={`absolute right-6 top-1/2 -translate-y-1/2 transition-all ${scanHighlight ? 'text-green-500 scale-125' : 'text-blue-500'}`}>
-                  {scanHighlight ? <CheckCircle size={24} /> : <Scan size={24} />}
-                </div>
-              </div>
+              <input 
+                required
+                value={batchId}
+                onChange={(e) => setBatchId(e.target.value.toUpperCase())}
+                placeholder="AUTO-FILL ON SCAN"
+                className={`w-full px-8 py-6 border-2 transition-all font-mono font-bold text-xl uppercase rounded-[1.8rem] ${scanHighlight ? 'border-green-500 bg-green-50' : 'border-transparent bg-gray-50 focus:border-blue-500'}`}
+              />
             </div>
 
             <div className="grid grid-cols-1 gap-6">
@@ -262,7 +257,7 @@ const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTra
                 <select 
                   value={formData.transportMode}
                   onChange={(e) => setFormData({...formData, transportMode: e.target.value})}
-                  className="w-full px-8 py-5 border border-gray-100 rounded-[1.5rem] bg-gray-50 text-gray-800 outline-none transition-all font-bold cursor-pointer appearance-none shadow-sm"
+                  className="w-full px-8 py-5 border border-gray-100 rounded-[1.5rem] bg-gray-50 font-bold shadow-sm"
                 >
                   <option>Truck - Cold Chain v2</option>
                   <option>Truck - Standard Freight</option>
@@ -274,7 +269,7 @@ const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTra
                 <input 
                   value={formData.temp}
                   onChange={(e) => setFormData({...formData, temp: e.target.value})}
-                  className="w-full px-8 py-5 border border-gray-100 rounded-[1.5rem] bg-gray-50 text-gray-800 outline-none transition-all font-bold shadow-sm"
+                  className="w-full px-8 py-5 border border-gray-100 rounded-[1.5rem] bg-gray-50 font-bold shadow-sm"
                 />
               </div>
             </div>
@@ -283,19 +278,14 @@ const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTra
               <button 
                 type="submit"
                 disabled={loading || !batchId}
-                className="w-full bg-blue-600 text-white py-8 rounded-[2.5rem] font-black uppercase text-lg tracking-[0.2em] hover:bg-blue-700 transition-all shadow-2xl shadow-blue-200 flex items-center justify-center space-x-4 disabled:opacity-40 active:scale-[0.98] duration-300 btn-wow"
+                className="w-full bg-blue-600 text-white py-8 rounded-[2.5rem] font-black uppercase text-lg hover:bg-blue-700 shadow-2xl flex items-center justify-center space-x-4 disabled:opacity-40 active:scale-[0.98] btn-wow"
               >
-                {loading ? <><Loader2 className="animate-spin" size={32} /> <span className="text-sm">SEALING...</span></> : <><Navigation size={28} /> <span>SYNC ASSET</span></>}
+                {loading ? <Loader2 className="animate-spin" size={32} /> : <span>SYNC ASSET + GPS</span>}
               </button>
             </div>
           </form>
         </div>
       </div>
-
-      <style>{`
-        @keyframes scan { 0% { top: 0; } 50% { top: 100%; } 100% { top: 0; } }
-        .animate-scan { animation: scan 3s linear infinite; }
-      `}</style>
     </div>
   );
 };
