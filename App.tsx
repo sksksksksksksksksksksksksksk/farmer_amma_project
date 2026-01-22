@@ -7,7 +7,7 @@ import FarmerDashboard from './pages/FarmerDashboard';
 import DistributorDashboard from './pages/DistributorDashboard';
 import RetailerDashboard from './pages/RetailerDashboard';
 import CustomerTrace from './pages/CustomerTrace';
-import { LogOut, Package, User, ShoppingCart, Truck, Search } from 'lucide-react';
+import { LogOut, Package, User, Search } from 'lucide-react';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -29,6 +29,9 @@ const App: React.FC = () => {
         setView('trace');
       } else if (hash === '#landing') {
         setView('landing');
+      } else if (hash === '#trace') {
+        setTraceId(null);
+        setView('trace');
       }
     };
 
@@ -38,9 +41,13 @@ const App: React.FC = () => {
   }, []);
 
   const handleLogin = async (email: string, role: UserRole) => {
-    const loggedInUser = await authService.login(email, role);
-    setUser(loggedInUser);
-    setView('dashboard');
+    try {
+      const loggedInUser = await authService.login(email, role);
+      setUser(loggedInUser);
+      setView('dashboard');
+    } catch (err: any) {
+      alert(err.message);
+    }
   };
 
   const handleLogout = () => {
@@ -69,7 +76,7 @@ const App: React.FC = () => {
 
           <nav className="flex items-center space-x-4">
             <button 
-              onClick={() => setView('trace')}
+              onClick={() => { window.location.hash = '#trace'; setView('trace'); }}
               className="hidden md:flex items-center space-x-1 text-gray-600 hover:text-green-600 px-3 py-2 rounded-md font-medium transition-colors"
             >
               <Search size={18} />
@@ -92,7 +99,7 @@ const App: React.FC = () => {
               </div>
             ) : (
               <button 
-                onClick={() => setView('landing')}
+                onClick={() => { window.location.hash = '#landing'; setView('landing'); }}
                 className="bg-green-600 text-white px-5 py-2 rounded-lg font-semibold shadow-sm hover:bg-green-700 transition"
               >
                 Login
@@ -116,7 +123,7 @@ const App: React.FC = () => {
 
       <footer className="bg-white border-t py-8">
         <div className="max-w-7xl mx-auto px-4 text-center">
-          <p className="text-gray-500 text-sm">© 2024 AgriChain Protocol. Powered by Web3 & Transparency.</p>
+          <p className="text-gray-500 text-sm">© 2024 AgriChain Protocol. Decentralized Provenance Network.</p>
         </div>
       </footer>
     </div>

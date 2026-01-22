@@ -21,6 +21,8 @@ export interface Batch {
   quantity: string;
   harvestDate: string;
   location: string;
+  latitude: number | null;
+  longitude: number | null;
   imageUrl?: string;
   createdAt: number;
 }

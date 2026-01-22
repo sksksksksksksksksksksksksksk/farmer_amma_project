@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { UserProfile, Batch, UserRole, BatchEvent } from '../types';
 import { dbService } from '../services/dbService';
 import { blockchainService } from '../services/blockchainService';
-import { Plus, CheckCircle2, ChevronRight, QrCode, X, Download, Printer, ShieldCheck, Copy, Check, Share2, Leaf, ExternalLink, Loader2, Upload } from 'lucide-react';
+import { Plus, CheckCircle2, QrCode, X, Download, Printer, ShieldCheck, Copy, Check, Leaf, Loader2 } from 'lucide-react';
 
 interface FarmerDashboardProps {
   user: UserProfile;
@@ -41,6 +41,19 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
     setLoading(true);
 
     try {
+      // Capture Geolocation for Genesis entry
+      let lat: number | null = null;
+      let lng: number | null = null;
+      try {
+        const pos: any = await new Promise((res, rej) => 
+          navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000 })
+        );
+        lat = pos.coords.latitude;
+        lng = pos.coords.longitude;
+      } catch (err) {
+        console.warn("Geolocation failed during registration", err);
+      }
+
       const batchId = Math.random().toString(36).substr(2, 6).toUpperCase() + '-' + Math.floor(1000 + Math.random() * 9000);
       const newBatch: Batch = {
         id: batchId,
@@ -49,24 +62,16 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
         seedType: formData.seedType,
         quantity: formData.quantity,
         location: formData.location,
+        latitude: lat,
+        longitude: lng,
         harvestDate: new Date().toISOString(),
         createdAt: Date.now(),
       };
 
+      // Store in Supabase 'batches' table with coordinates
       await dbService.createBatch(newBatch);
 
-      let lat = null, lng = null;
-      try {
-        const pos: any = await new Promise((res, rej) => 
-          navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000 })
-        );
-        lat = pos.coords.latitude;
-        lng = pos.coords.longitude;
-      } catch (err) {
-        console.warn("Geolocation failed", err);
-      }
-
-      const eventData = { ...newBatch, lat, lng, type: 'ORIGIN' };
+      const eventData = { ...newBatch, type: 'ORIGIN' };
       const dataHash = blockchainService.generateDataHash(eventData);
       const txHash = await blockchainService.submitToBlockchain(dataHash);
 
@@ -78,17 +83,20 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
         timestamp: Date.now(),
         latitude: lat,
         longitude: lng,
-        details: { action: 'Harvest & Registration', crop: formData.crop },
+        details: { action: 'Harvest & Registration', crop: formData.crop, originGPS: lat ? `${lat}, ${lng}` : 'Unavailable' },
         dataHash,
         txHash
       };
 
+      // Store genesis audit event
       await dbService.addEvent(genesisEvent);
       
       setBatches([newBatch, ...batches]);
       setShowForm(false);
       setFormData({ crop: '', seedType: '', quantity: '', location: '' });
       setSelectedBatchQR(newBatch);
+    } catch (err: any) {
+      alert("Registration Failed: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -115,9 +123,7 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
     }
   };
 
-  const handlePrint = () => {
-    window.print();
-  };
+  const handlePrint = () => { window.print(); };
 
   const handleCopyId = (id: string) => {
     navigator.clipboard.writeText(id);
@@ -127,6 +133,7 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
 
   return (
     <div className="space-y-12 pb-24">
+      {/* Print Label Structure */}
       <div id="print-label" className="hidden print:block print:p-20 bg-white">
         {selectedBatchQR && (
           <div className="border-[12px] border-black p-16 text-center space-y-12">
@@ -143,10 +150,9 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
               <p className="text-4xl font-mono font-black border-2 border-black inline-block px-8 py-4">ID: {selectedBatchQR.id}</p>
               <div className="grid grid-cols-2 text-2xl font-bold pt-8">
                  <p className="text-left">ORIGIN: {selectedBatchQR.location}</p>
-                 <p className="text-right">DATE: {new Date(selectedBatchQR.harvestDate).toLocaleDateString()}</p>
+                 <p className="text-right">GPS: {selectedBatchQR.latitude ? `${selectedBatchQR.latitude.toFixed(4)}, ${selectedBatchQR.longitude?.toFixed(4)}` : 'N/A'}</p>
               </div>
             </div>
-            <p className="text-lg font-black uppercase tracking-[0.5em] border-t-4 border-black pt-12">DECENTRALIZED PROVENANCE SEAL</p>
           </div>
         )}
       </div>
@@ -173,7 +179,7 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
              </div>
              <div>
                 <h2 className="text-4xl font-black text-gray-900 uppercase tracking-tighter">New Manifest</h2>
-                <p className="text-gray-400 font-bold text-sm tracking-widest uppercase">Initializing Distributed Entry...</p>
+                <p className="text-gray-400 font-bold text-sm tracking-widest uppercase italic">GPS Coordinates will be captured on submission</p>
              </div>
           </div>
           
@@ -247,7 +253,7 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
                     <h3 className="font-black text-4xl text-gray-900 uppercase tracking-tighter mb-2 group-hover:text-green-600 transition-colors leading-none">{batch.crop}</h3>
                     <div className="flex items-center space-x-2">
                       <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                      <p className="text-[10px] text-gray-400 font-black tracking-widest uppercase">CHAIN-ID: {batch.id}</p>
+                      <p className="text-[10px] text-gray-400 font-black tracking-widest uppercase">GPS: {batch.latitude ? `${batch.latitude.toFixed(2)}, ${batch.longitude?.toFixed(2)}` : 'N/A'}</p>
                     </div>
                   </div>
                   <div className="bg-green-50 p-4 rounded-3xl text-green-600 shadow-inner">
@@ -297,52 +303,30 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
                 </button>
              </div>
 
-             <div className="p-14 overflow-y-auto flex-grow">
-                <div className="flex flex-col items-center text-center">
-                   <div className="relative mb-14 group/qr">
-                      <div className="p-12 bg-white rounded-[5rem] border-[12px] border-green-600/5 shadow-[0_40px_80px_-15px_rgba(0,0,0,0.15)] group-hover/qr:scale-105 transition-all duration-700">
-                         <img 
-                           src={`https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(window.location.origin + '/#trace/' + selectedBatchQR.id)}`}
-                           alt="QR"
-                           className="w-64 h-64 sm:w-[22rem] sm:h-[22rem] mx-auto"
-                         />
-                      </div>
-                      <div className="absolute -top-6 -left-6 w-20 h-20 border-t-[10px] border-l-[10px] border-green-500 rounded-tl-[3rem]"></div>
-                      <div className="absolute -top-6 -right-6 w-20 h-20 border-t-[10px] border-r-[10px] border-green-500 rounded-tr-[3rem]"></div>
-                      <div className="absolute -bottom-6 -left-6 w-20 h-20 border-b-[10px] border-l-[10px] border-green-500 rounded-bl-[3rem]"></div>
-                      <div className="absolute -bottom-6 -right-6 w-20 h-20 border-b-[10px] border-r-[10px] border-green-500 rounded-br-[3rem]"></div>
-                   </div>
+             <div className="p-14 overflow-y-auto flex-grow text-center">
+                <div className="relative mb-14 inline-block">
+                  <div className="p-12 bg-white rounded-[5rem] border-[12px] border-green-600/5 shadow-2xl">
+                    <img 
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(window.location.origin + '/#trace/' + selectedBatchQR.id)}`}
+                      alt="QR"
+                      className="w-64 h-64 sm:w-[22rem] sm:h-[22rem]"
+                    />
+                  </div>
+                </div>
 
-                   <div className="mb-14 space-y-6">
-                      <h3 className="text-7xl font-black text-gray-900 uppercase tracking-tighter leading-none mb-4">{selectedBatchQR.crop}</h3>
-                      <div className="flex items-center justify-center space-x-4 bg-gray-50 px-12 py-6 rounded-[2.5rem] mx-auto border border-gray-100 w-fit shadow-inner group/copy">
-                         <span className="font-mono text-gray-900 font-black tracking-[0.2em] text-xl">#{selectedBatchQR.id}</span>
-                         <button onClick={() => handleCopyId(selectedBatchQR.id)} className="text-gray-300 hover:text-gray-900 transition-all">
-                            {copied ? <Check size={32} className="text-green-600" /> : <Copy size={32} className="group-hover/copy:scale-110 transition-transform" />}
-                         </button>
-                      </div>
-                   </div>
+                <div className="mb-14 space-y-6">
+                  <h3 className="text-7xl font-black text-gray-900 uppercase tracking-tighter leading-none">{selectedBatchQR.crop}</h3>
+                  <div className="flex items-center justify-center space-x-4 bg-gray-50 px-12 py-6 rounded-[2.5rem] mx-auto border border-gray-100 w-fit">
+                    <span className="font-mono text-gray-900 font-black tracking-[0.2em] text-xl">#{selectedBatchQR.id}</span>
+                    <button onClick={() => handleCopyId(selectedBatchQR.id)} className="text-gray-300 hover:text-gray-900">
+                      {copied ? <Check size={32} className="text-green-600" /> : <Copy size={32} />}
+                    </button>
+                  </div>
+                </div>
 
-                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 w-full">
-                      <button 
-                        onClick={() => handleDownloadQR(selectedBatchQR)}
-                        className="flex items-center justify-center space-x-5 bg-gray-900 text-white py-10 rounded-[3rem] font-black uppercase text-xl tracking-[0.2em] hover:bg-black transition-all active:scale-95 shadow-2xl hover:-translate-y-2 group/btn"
-                      >
-                         <Download size={36} className="group-hover/btn:translate-y-1 transition-transform" />
-                         <span>Save Label</span>
-                      </button>
-                      <button 
-                        onClick={handlePrint}
-                        className="flex items-center justify-center space-x-5 bg-green-600 text-white py-10 rounded-[3rem] font-black uppercase text-xl tracking-[0.2em] hover:bg-green-700 transition-all active:scale-95 shadow-2xl shadow-green-100/50 hover:-translate-y-2 group/btn"
-                      >
-                         <Printer size={36} className="group-hover/btn:scale-110 transition-transform" />
-                         <span>Print Manifest</span>
-                      </button>
-                   </div>
-                   
-                   <p className="mt-14 text-[10px] font-black text-gray-300 uppercase tracking-[0.6em] animate-pulse">
-                      Supabase Cloud Sync • AgriChain Protocol
-                   </p>
+                <div className="grid grid-cols-2 gap-8 w-full">
+                  <button onClick={() => handleDownloadQR(selectedBatchQR)} className="bg-gray-900 text-white py-10 rounded-[3rem] font-black uppercase text-xl shadow-2xl">Save Label</button>
+                  <button onClick={handlePrint} className="bg-green-600 text-white py-10 rounded-[3rem] font-black uppercase text-xl shadow-2xl shadow-green-100/50">Print Manifest</button>
                 </div>
              </div>
            </div>

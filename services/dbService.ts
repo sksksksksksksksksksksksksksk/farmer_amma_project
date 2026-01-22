@@ -18,6 +18,8 @@ export const dbService = {
       farmerId: b.farmer_id,
       seedType: b.seed_type,
       harvestDate: b.harvest_date,
+      latitude: b.latitude,
+      longitude: b.longitude,
       createdAt: new Date(b.created_at).getTime()
     }));
   },
@@ -35,6 +37,8 @@ export const dbService = {
       farmerId: data.farmer_id,
       seedType: data.seed_type,
       harvestDate: data.harvest_date,
+      latitude: data.latitude,
+      longitude: data.longitude,
       createdAt: new Date(data.created_at).getTime()
     };
   },
@@ -49,7 +53,9 @@ export const dbService = {
         seed_type: batch.seedType,
         quantity: batch.quantity,
         harvest_date: batch.harvestDate,
-        location: batch.location
+        location: batch.location,
+        latitude: batch.latitude,
+        longitude: batch.longitude
       }]);
     
     if (error) {
