@@ -24,7 +24,6 @@ export const authService = {
       const firebaseUser = userCredential.user;
 
       // Sync with Supabase Profiles
-      // CRITICAL: Ensure the 'profiles' table in Supabase has 'id' set to type 'TEXT', not 'UUID'.
       const { error: profileError } = await supabase
         .from('profiles')
         .upsert({
@@ -36,7 +35,7 @@ export const authService = {
 
       if (profileError) {
         console.error("Supabase Profile Sync Detail:", profileError);
-        throw new Error(profileError.message || "Failed to sync profile to database. Check if table exists.");
+        throw new Error(profileError.message || "Failed to sync profile to database. Check network connection.");
       }
 
       const newUser: UserProfile = {
@@ -61,18 +60,20 @@ export const authService = {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
 
-      // Fetch role and name from Supabase
-      const { data: profile, error: profileError } = await supabase
+      // Fetch role and name from Supabase using an array check instead of .single()
+      // This prevents the PostgREST "Cannot coerce" error when 0 rows are returned.
+      const { data: profiles, error: profileError } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', firebaseUser.uid)
-        .eq('role', role)
-        .single();
+        .eq('role', role);
+      
+      const profile = profiles && profiles.length > 0 ? profiles[0] : null;
       
       if (profileError || !profile) {
         console.error("Supabase Login Fetch Error:", profileError);
         await signOut(auth);
-        throw new Error(profileError?.message || "Access Denied: Role not found in decentralized registry.");
+        throw new Error("Access Denied: Node Identity or Role mismatch in the registry.");
       }
 
       const user: UserProfile = {

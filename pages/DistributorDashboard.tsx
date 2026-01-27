@@ -3,8 +3,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { UserProfile, UserRole, BatchEvent } from '../types';
 import { dbService } from '../services/dbService';
 import { blockchainService } from '../services/blockchainService';
-import { Truck, Scan, CheckCircle, Navigation, Loader2, MapPin, Radio, Camera, ShieldCheck, Timer, Upload, Image as ImageIcon } from 'lucide-react';
-import { Html5Qrcode } from 'https://esm.sh/html5-qrcode';
+import { Truck, CheckCircle, Loader2, MapPin, Camera, Zap, RefreshCw, Image as ImageIcon } from 'lucide-react';
+
+declare const Html5Qrcode: any;
 
 interface DistributorDashboardProps {
   user: UserProfile;
@@ -14,14 +15,14 @@ interface DistributorDashboardProps {
 const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTrace }) => {
   const [batchId, setBatchId] = useState('');
   const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState<string | null>(null);
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [scanHighlight, setScanHighlight] = useState(false);
   const [analyzingFile, setAnalyzingFile] = useState(false);
   
-  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const scannerRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isMounted = useRef(true);
   
   const [formData, setFormData] = useState({
     transportMode: 'Truck - Refrigerated',
@@ -29,263 +30,236 @@ const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTra
     carrier: 'AgriLogistics Global'
   });
 
-  useEffect(() => {
-    const hash = window.location.hash;
-    if (hash.startsWith('#trace/')) {
-      const id = hash.replace('#trace/', '');
-      setBatchId(id.toUpperCase());
-    }
-  }, []);
-
-  const parseQrContent = (text: string) => {
-    let id = text;
-    if (text.includes('/#trace/')) {
-      id = text.split('/#trace/')[1].split('?')[0];
-    } else if (text.includes('trace=')) {
-      id = text.split('trace=')[1].split('&')[0];
-    } else if (text.startsWith('http')) {
-      const parts = text.split('/');
-      const lastPart = parts[parts.length - 1];
-      if (lastPart.includes('-') || lastPart.length > 4) {
-        id = lastPart;
+  const safeStopScanner = async () => {
+    if (scannerRef.current) {
+      try {
+        if (scannerRef.current.isScanning) {
+          await scannerRef.current.stop();
+        }
+      } catch (e) {
+        console.debug("Scanner stop suppressed:", e);
+      } finally {
+        scannerRef.current = null;
       }
     }
-    return id.trim().toUpperCase();
+  };
+
+  const parseQrContent = (text: string) => {
+    const pattern = /([A-Z0-9]{4,10}-\d{3,6})/i;
+    const match = text.match(pattern);
+    if (match) return match[1].toUpperCase();
+    if (text.includes('/#trace/')) {
+      const parts = text.split('/#trace/');
+      if (parts[1]) return parts[1].split(/[?#]/)[0].toUpperCase();
+    }
+    return text.trim().toUpperCase();
+  };
+
+  const startScanner = async () => {
+    if (!isMounted.current) return;
+    try {
+      await safeStopScanner();
+      const container = document.getElementById("scanner-container");
+      if (!container) return;
+      const html5QrCode = new Html5Qrcode("scanner-container");
+      scannerRef.current = html5QrCode;
+      const config = { 
+        fps: 20,
+        qrbox: (viewWidth: number, viewHeight: number) => {
+          const size = Math.min(viewWidth, viewHeight) * 0.7;
+          return { width: size, height: size };
+        },
+        aspectRatio: 1.0
+      };
+      await html5QrCode.start(
+        { facingMode: "environment" }, 
+        config, 
+        (decodedText: string) => {
+          const id = parseQrContent(decodedText);
+          if (id && id.length >= 4) {
+            setBatchId(id);
+            setScanHighlight(true);
+            if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]);
+            setTimeout(() => setScanHighlight(false), 1500);
+          }
+        }, 
+        () => {} 
+      );
+      if (isMounted.current) setCameraActive(true);
+    } catch (err) {
+      if (isMounted.current) setCameraActive(false);
+    }
   };
 
   useEffect(() => {
+    isMounted.current = true;
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (pos) => setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        (err) => console.warn("Location access denied", err),
-        { enableHighAccuracy: true }
+        null, { enableHighAccuracy: true }
       );
     }
-
-    const startScanner = async () => {
-      try {
-        const html5QrCode = new Html5Qrcode("scanner-container");
-        scannerRef.current = html5QrCode;
-        
-        const qrCodeSuccessCallback = (decodedText: string) => {
-          const id = parseQrContent(decodedText);
-          if (id && id.length > 3) {
-            setBatchId(id);
-            setScanHighlight(true);
-            setTimeout(() => setScanHighlight(false), 1500);
-          }
-        };
-
-        const config = { 
-          fps: 20, 
-          qrbox: (viewWidth: number, viewHeight: number) => {
-            const minDim = Math.min(viewWidth, viewHeight);
-            const boxSize = Math.floor(minDim * 0.7);
-            return { width: boxSize, height: boxSize };
-          },
-          aspectRatio: 1.0
-        };
-
-        await html5QrCode.start({ facingMode: "environment" }, config, qrCodeSuccessCallback, () => {});
-        setCameraActive(true);
-      } catch (err) {
-        console.error("Scanner failed to start", err);
-        setCameraActive(false);
-      }
-    };
-
-    startScanner();
-
+    const timer = setTimeout(startScanner, 1000);
     return () => {
-      if (scannerRef.current) {
-        scannerRef.current.stop().catch(console.error);
-      }
+      isMounted.current = false;
+      clearTimeout(timer);
+      safeStopScanner();
     };
   }, []);
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
     setAnalyzingFile(true);
-    
     const html5QrCode = new Html5Qrcode("scanner-hidden-reader");
     try {
-      await new Promise(r => setTimeout(r, 800)); // Cinematic pause
       const decodedText = await html5QrCode.scanFile(file, true);
       const id = parseQrContent(decodedText);
-      if (id && id.length > 3) {
+      if (id) {
         setBatchId(id);
         setScanHighlight(true);
-        setTimeout(() => setScanHighlight(false), 1500);
+        setTimeout(() => setScanHighlight(false), 2000);
       }
     } catch (err) {
-      alert("Verification Error: No valid AgriChain matrix found in image.");
+      alert("Verification Failed: No detectable QR signature.");
     } finally {
       setAnalyzingFile(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
-  const handleAutomatedSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!batchId) return;
-
     setLoading(true);
     try {
-      // Refresh location precisely for the event record
       const pos: any = await new Promise((res, rej) => 
         navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 5000 })
-      );
+      ).catch(() => ({ coords: { latitude: 0, longitude: 0 } }));
       const lat = pos.coords.latitude;
       const lng = pos.coords.longitude;
-
-      const timestamp = Date.now();
-      const eventData = { batchId, ...formData, lat, lng, timestamp, type: 'TRANSIT' };
-      const dataHash = blockchainService.generateDataHash(eventData);
-      const txHash = await blockchainService.submitToBlockchain(dataHash);
-
       const event: BatchEvent = {
         id: Math.random().toString(36).substr(2, 9),
         batchId,
         role: UserRole.DISTRIBUTOR,
         userName: user.name,
-        timestamp,
-        latitude: lat,
-        longitude: lng,
-        details: { 
-          action: 'Logistics Custody Transferred',
-          ...formData,
-          gpsProof: `${lat.toFixed(6)}, ${lng.toFixed(6)}`
-        },
-        dataHash,
-        txHash
+        timestamp: Date.now(),
+        latitude: lat || null,
+        longitude: lng || null,
+        details: { ...formData, action: 'Shipment Custody Confirmed' },
+        dataHash: blockchainService.generateDataHash({ batchId, ...formData, lat, lng }),
+        txHash: await blockchainService.submitToBlockchain("distributor-log")
       };
-
       await dbService.addEvent(event);
-      setSuccess(batchId);
+      alert(`Asset ${batchId} synchronized.`);
       setBatchId('');
-      alert("Logistics node verified and stored in Supabase with GPS coordinates.");
     } catch (err: any) {
-      alert("Submission failed. Please ensure GPS is enabled for audit trail.");
+      alert("Submission Error: Check network or GPS.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-10 animate-spring pb-20">
+    <div className="max-w-6xl mx-auto space-y-8 animate-spring pb-20 px-4">
       <div id="scanner-hidden-reader" className="hidden"></div>
       <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
-
-      <div className="flex justify-between items-end border-b border-gray-100 pb-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-gray-100 pb-8">
         <div>
-          <h1 className="text-5xl font-black text-gray-900 tracking-tighter uppercase leading-none mb-3">Distributor Hub</h1>
-          <div className="flex items-center space-x-4">
-             <p className="text-gray-400 font-bold uppercase tracking-widest text-xs">Node: {user.name}</p>
-             <div className="h-1 w-1 bg-gray-300 rounded-full"></div>
-             <p className="text-blue-600 font-black uppercase tracking-widest text-xs flex items-center space-x-2">
-                <Radio size={14} className="animate-pulse" />
-                <span>Network Status: Online</span>
-             </p>
-          </div>
+          <h1 className="text-5xl font-black text-gray-900 tracking-tighter uppercase mb-2">Carrier Hub</h1>
+          <p className="text-gray-400 font-bold uppercase tracking-widest text-[10px]">Registry Node: {user.name}</p>
         </div>
-        
         <div className="flex items-center space-x-4">
-           <div className={`flex items-center space-x-2 px-4 py-2 rounded-full border text-[10px] font-black uppercase tracking-widest transition-all ${location ? 'bg-green-50 border-green-200 text-green-600' : 'bg-orange-50 border-orange-200 text-orange-600 animate-pulse'}`}>
-              <MapPin size={12} />
-              <span>{location ? 'GPS Locked' : 'Searching GPS...'}</span>
+           <div className={`px-4 py-2 rounded-full border text-[10px] font-black uppercase tracking-widest ${location ? 'bg-green-50 text-green-600 border-green-200' : 'bg-red-50 text-red-600 animate-pulse'}`}>
+              <MapPin size={12} className="inline mr-2" />
+              <span>{location ? 'GPS Locked' : 'Locating...'}</span>
            </div>
-           <div className={`flex items-center space-x-2 px-4 py-2 rounded-full border text-[10px] font-black uppercase tracking-widest transition-all ${cameraActive ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-red-50 border-red-200 text-red-600 animate-pulse'}`}>
-              <Camera size={12} />
-              <span>{cameraActive ? 'Vision Active' : 'Vision Offline'}</span>
-           </div>
+           <button onClick={startScanner} className="p-3 bg-gray-100 rounded-2xl hover:bg-gray-200 transition-all active:scale-90 border border-gray-200">
+              <RefreshCw size={20} className={cameraActive ? '' : 'animate-spin text-blue-600'} />
+           </button>
         </div>
       </div>
-
       <div className="grid lg:grid-cols-5 gap-10">
-        <div className={`lg:col-span-3 bg-gray-900 rounded-[4rem] shadow-[0_50px_100px_-20px_rgba(0,0,0,0.5)] relative overflow-hidden flex flex-col items-center justify-center min-h-[500px] border-4 transition-all duration-700 ${scanHighlight ? 'border-green-500 scale-[1.02]' : 'border-gray-800'}`}>
-          <div id="scanner-container" className="absolute inset-0 w-full h-full [&>div]:border-none [&_video]:object-cover opacity-80"></div>
-
-          <div className="absolute inset-0 pointer-events-none z-20">
-             <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 border-2 rounded-[4rem] flex items-center justify-center transition-all duration-500 ${scanHighlight ? 'border-white bg-green-500/20 scale-110' : 'border-white/10'}`}>
-                <div className={`absolute -top-4 -left-4 w-16 h-16 border-t-8 border-l-8 rounded-tl-3xl transition-colors duration-300 ${scanHighlight ? 'border-white' : 'border-green-500'}`}></div>
-                <div className={`absolute -top-4 -right-4 w-16 h-16 border-t-8 border-r-8 rounded-tr-3xl transition-colors duration-300 ${scanHighlight ? 'border-white' : 'border-green-500'}`}></div>
-                <div className={`absolute -bottom-4 -left-4 w-16 h-16 border-b-8 border-l-8 rounded-bl-3xl transition-colors duration-300 ${scanHighlight ? 'border-white' : 'border-green-500'}`}></div>
-                <div className={`absolute -bottom-4 -right-4 w-16 h-16 border-b-8 border-r-8 rounded-br-3xl transition-colors duration-300 ${scanHighlight ? 'border-white' : 'border-green-500'}`}></div>
-                {scanHighlight && <div className="animate-ping bg-white rounded-full p-4"> <CheckCircle size={64} className="text-green-600" /> </div>}
+        <div className={`lg:col-span-3 bg-black rounded-[4rem] shadow-2xl relative overflow-hidden min-h-[550px] border-4 transition-all duration-500 ${scanHighlight ? 'border-green-500 scale-[1.01]' : 'border-gray-800'}`}>
+          <div id="scanner-container" className="absolute inset-0 w-full h-full [&_video]:object-cover"></div>
+          {!cameraActive && (
+             <div className="absolute inset-0 flex flex-col items-center justify-center text-white/50 space-y-4">
+                <Camera size={48} className="animate-pulse" />
+                <p className="text-[10px] font-black uppercase tracking-widest">Waking Camera Hardware...</p>
+             </div>
+          )}
+          <div className="absolute inset-0 pointer-events-none z-20 flex items-center justify-center">
+             <div className={`w-80 h-80 border-4 rounded-[3.5rem] transition-all duration-300 relative ${scanHighlight ? 'border-white bg-green-500/30' : 'border-green-500/60 shadow-[0_0_150px_rgba(34,197,94,0.5)]'}`}>
+                {!scanHighlight && cameraActive && <div className="absolute left-0 w-full h-1 bg-green-400 shadow-[0_0_40px_#4ade80] animate-scan top-0"></div>}
+                {scanHighlight && <div className="absolute inset-0 flex items-center justify-center"> <CheckCircle size={110} className="text-white animate-bounce" /> </div>}
              </div>
           </div>
-
-          <div className="relative z-40 flex flex-col items-center mt-auto mb-10">
+          <div className="absolute top-8 left-8 z-30 flex items-center space-x-3 bg-black/80 backdrop-blur-xl px-6 py-3 rounded-2xl border border-white/10">
+             <div className={`w-2.5 h-2.5 rounded-full ${cameraActive ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
+             <span className="text-white text-[10px] font-black uppercase tracking-[0.2em]">{cameraActive ? 'AI Vision Optimized' : 'Hardware Idle'}</span>
+          </div>
+          <div className="absolute bottom-10 left-0 right-0 z-30 flex flex-col items-center space-y-4 px-8">
             <button 
               onClick={() => fileInputRef.current?.click()}
               disabled={analyzingFile}
-              className="bg-white/10 backdrop-blur-xl px-10 py-5 rounded-[2rem] border border-white/20 hover:bg-white/20 transition-all flex items-center space-x-4 text-white group"
+              className="bg-white px-12 py-6 rounded-[2.5rem] text-gray-900 font-black uppercase text-sm shadow-2xl transition-all active:scale-95 flex items-center space-x-4 border-2 border-transparent hover:border-blue-600"
             >
-               {analyzingFile ? <Loader2 size={24} className="animate-spin text-green-400" /> : <Upload size={24} className="text-green-400 group-hover:scale-110 transition-transform" />}
-               <span className="font-black uppercase tracking-widest text-sm">{analyzingFile ? 'Analyzing...' : 'Upload Image'}</span>
+              {analyzingFile ? <Loader2 size={24} className="animate-spin" /> : <ImageIcon size={24} className="text-blue-600" />}
+              <span>{analyzingFile ? 'Decoding...' : 'Upload QR Photo'}</span>
             </button>
           </div>
         </div>
-
         <div className="lg:col-span-2 bg-white p-12 rounded-[4rem] shadow-2xl border border-gray-100 flex flex-col">
-          <div className="flex items-center space-x-5 mb-10">
-            <div className="bg-blue-600 p-4 rounded-3xl text-white shadow-xl shadow-blue-200">
-              <Truck size={32} />
+          <form onSubmit={handleSubmit} className="space-y-8 flex-grow">
+            <div className="space-y-4">
+              <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.4em] ml-2">Manifest Identity</label>
+              <div className="relative">
+                <input 
+                  required
+                  value={batchId}
+                  onChange={(e) => setBatchId(e.target.value.toUpperCase())}
+                  placeholder="POINT AT QR"
+                  className={`w-full px-8 py-7 border-2 transition-all font-mono font-black text-2xl uppercase rounded-[2.2rem] outline-none ${scanHighlight ? 'border-green-500 bg-green-50 text-green-700' : 'border-transparent bg-gray-50 focus:border-blue-600'}`}
+                />
+                <Zap className={`absolute right-8 top-1/2 -translate-y-1/2 ${scanHighlight ? 'text-green-500' : 'text-gray-200'}`} size={24} />
+              </div>
             </div>
-            <div>
-               <h2 className="text-3xl font-black text-gray-900 uppercase tracking-tighter">Manifest Sync</h2>
-               <p className="text-gray-400 font-bold text-xs uppercase tracking-widest">Digital GPS Custody Seal</p>
-            </div>
-          </div>
-
-          <form onSubmit={handleAutomatedSubmit} className="space-y-8 flex-grow">
-            <div>
-              <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.3em] mb-3 ml-2">Detected Asset ID</label>
-              <input 
-                required
-                value={batchId}
-                onChange={(e) => setBatchId(e.target.value.toUpperCase())}
-                placeholder="AUTO-FILL ON SCAN"
-                className={`w-full px-8 py-6 border-2 transition-all font-mono font-bold text-xl uppercase rounded-[1.8rem] ${scanHighlight ? 'border-green-500 bg-green-50' : 'border-transparent bg-gray-50 focus:border-blue-500'}`}
-              />
-            </div>
-
             <div className="grid grid-cols-1 gap-6">
-              <div className="space-y-3">
-                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.3em] ml-2">Transport Architecture</label>
+              <div className="space-y-2">
+                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.4em] ml-2">Transport Chain</label>
                 <select 
                   value={formData.transportMode}
                   onChange={(e) => setFormData({...formData, transportMode: e.target.value})}
-                  className="w-full px-8 py-5 border border-gray-100 rounded-[1.5rem] bg-gray-50 font-bold shadow-sm"
+                  className="w-full px-8 py-5 border border-gray-100 rounded-[1.8rem] bg-gray-50 font-black text-sm uppercase outline-none"
                 >
-                  <option>Truck - Cold Chain v2</option>
-                  <option>Truck - Standard Freight</option>
-                  <option>Autonomous Air Cargo</option>
+                  <option>Truck - Refrigerated</option>
+                  <option>Truck - Ambient</option>
+                  <option>Air Priority Cargo</option>
                 </select>
               </div>
-              <div className="space-y-3">
-                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.3em] ml-2">Environment Metrics</label>
+              <div className="space-y-2">
+                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.4em] ml-2">Sensor Data</label>
                 <input 
                   value={formData.temp}
                   onChange={(e) => setFormData({...formData, temp: e.target.value})}
-                  className="w-full px-8 py-5 border border-gray-100 rounded-[1.5rem] bg-gray-50 font-bold shadow-sm"
+                  className="w-full px-8 py-5 border border-gray-100 rounded-[1.8rem] bg-gray-50 font-bold outline-none"
                 />
               </div>
             </div>
-
-            <div className="pt-6">
-              <button 
-                type="submit"
-                disabled={loading || !batchId}
-                className="w-full bg-blue-600 text-white py-8 rounded-[2.5rem] font-black uppercase text-lg hover:bg-blue-700 shadow-2xl flex items-center justify-center space-x-4 disabled:opacity-40 active:scale-[0.98] btn-wow"
-              >
-                {loading ? <Loader2 className="animate-spin" size={32} /> : <span>SYNC ASSET + GPS</span>}
-              </button>
-            </div>
+            <button 
+              type="submit"
+              disabled={loading || !batchId}
+              className="w-full bg-blue-600 text-white py-9 rounded-[3.5rem] font-black uppercase text-xl hover:bg-blue-700 shadow-2xl flex items-center justify-center space-x-4 disabled:opacity-30 transition-all active:scale-[0.98] mt-auto"
+            >
+              {loading ? <Loader2 className="animate-spin" size={32} /> : <span>SIGN PROVENANCE BLOCK</span>}
+            </button>
           </form>
         </div>
       </div>
+      <style>{`
+        @keyframes scan { 0% { top: 0; } 100% { top: 100%; } }
+        .animate-scan { animation: scan 1.2s ease-in-out infinite; }
+      `}</style>
     </div>
   );
 };
