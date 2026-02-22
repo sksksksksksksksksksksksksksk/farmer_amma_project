@@ -65,6 +65,7 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
         latitude: lat,
         longitude: lng,
         harvestDate: new Date().toISOString(),
+        status: 'HARVESTED',
         createdAt: Date.now(),
       };
 

@@ -3,7 +3,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { UserProfile, UserRole, BatchEvent } from '../types';
 import { dbService } from '../services/dbService';
 import { blockchainService } from '../services/blockchainService';
-import { Store, CheckCircle, Camera, Loader2, MapPin, ShieldCheck, RefreshCw, Image as ImageIcon } from 'lucide-react';
+import { aiService } from '../services/aiService';
+import { 
+  Store, CheckCircle, Camera, Loader2, MapPin, 
+  ShieldCheck, RefreshCw, Image as ImageIcon, 
+  ShoppingCart, Layers, Activity, Search, QrCode,
+  Tag, Box
+} from 'lucide-react';
 
 declare const Html5Qrcode: any;
 
@@ -23,7 +29,7 @@ const RetailerDashboard: React.FC<RetailerDashboardProps> = ({ user, onTrace }) 
   const scannerRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isMounted = useRef(true);
-  const [shelfLocation, setShelfLocation] = useState('Produce Aisle - Bin 14');
+  const [shelfLocation, setShelfLocation] = useState('Organic Aisle - Bin 12');
 
   const safeStopScanner = async () => {
     if (scannerRef.current) {
@@ -40,13 +46,49 @@ const RetailerDashboard: React.FC<RetailerDashboardProps> = ({ user, onTrace }) 
   };
 
   const parseQrContent = (text: string) => {
+    if (!text) return '';
+    
+    // 1. Try to match the standard batch ID pattern (e.g., ABCDEF-1234)
     const pattern = /([A-Z0-9]{4,10}-\d{3,6})/i;
     const match = text.match(pattern);
     if (match) return match[1].toUpperCase();
+    
+    // 2. Try to extract from URL hash (e.g., /#trace/ABCDEF-1234)
     if (text.includes('/#trace/')) {
       const parts = text.split('/#trace/');
-      if (parts[1]) return parts[1].split(/[?#]/)[0].toUpperCase();
+      if (parts[1]) {
+        const id = parts[1].split(/[?#]/)[0];
+        if (id) return id.toUpperCase();
+      }
     }
+    
+    // 3. Try to extract from query param (e.g., ?trace=ABCDEF-1234)
+    if (text.includes('trace=')) {
+      const parts = text.split('trace=');
+      if (parts[1]) {
+        const id = parts[1].split(/[&#]/)[0];
+        if (id) return id.toUpperCase();
+      }
+    }
+
+    // 4. Fallback: if it's a URL, take the last segment
+    if (text.startsWith('http')) {
+      try {
+        const url = new URL(text);
+        const pathParts = url.pathname.split('/').filter(Boolean);
+        if (pathParts.length > 0) {
+          const lastPart = pathParts[pathParts.length - 1];
+          if (lastPart && lastPart.length >= 4) return lastPart.toUpperCase();
+        }
+        // Also check hash in URL object
+        if (url.hash.startsWith('#trace/')) {
+          return url.hash.replace('#trace/', '').toUpperCase();
+        }
+      } catch (e) {
+        // Not a valid URL, continue to fallback
+      }
+    }
+    
     return text.trim().toUpperCase();
   };
 
@@ -54,13 +96,18 @@ const RetailerDashboard: React.FC<RetailerDashboardProps> = ({ user, onTrace }) 
     if (!isMounted.current) return;
     try {
       await safeStopScanner();
-      const container = document.getElementById("retail-scanner-view");
+      const container = document.getElementById("retailer-scanner-viewport");
       if (!container) return;
-      const html5QrCode = new Html5Qrcode("retail-scanner-view");
+      const html5QrCode = new Html5Qrcode("retailer-scanner-viewport");
       scannerRef.current = html5QrCode;
+      
       await html5QrCode.start(
         { facingMode: "environment" },
-        { fps: 20, qrbox: (w: number, h: number) => ({ width: Math.min(w, h) * 0.7, height: Math.min(w, h) * 0.7 }), aspectRatio: 1.0 },
+        { 
+          fps: 24, 
+          qrbox: (w: number, h: number) => ({ width: w * 0.75, height: h * 0.75 }), 
+          aspectRatio: 1.0 
+        },
         (text: string) => {
           const id = parseQrContent(text);
           if (id && id.length >= 4) { 
@@ -98,114 +145,240 @@ const RetailerDashboard: React.FC<RetailerDashboardProps> = ({ user, onTrace }) 
     const file = e.target.files?.[0];
     if (!file) return;
     setAnalyzingFile(true);
+    
+    // Create hidden reader if needed
+    let hiddenReader = document.getElementById("retail-hidden-reader");
+    if (!hiddenReader) {
+      hiddenReader = document.createElement('div');
+      hiddenReader.id = "retail-hidden-reader";
+      hiddenReader.style.visibility = "hidden";
+      hiddenReader.style.position = "absolute";
+      hiddenReader.style.left = "-9999px";
+      hiddenReader.style.width = "100px";
+      hiddenReader.style.height = "100px";
+      document.body.appendChild(hiddenReader);
+    }
+
     const html5QrCode = new Html5Qrcode("retail-hidden-reader");
     try {
-      const decodedText = await html5QrCode.scanFile(file, true);
-      const id = parseQrContent(decodedText);
+      // Try standard QR scan first
+      let id = '';
+      try {
+        const decodedText = await html5QrCode.scanFile(file, false);
+        id = parseQrContent(decodedText);
+      } catch (qrErr) {
+        console.log("Retail QR Scan failed, attempting AI extraction...");
+      }
+
+      // If QR scan failed or returned no ID, try AI extraction
+      if (!id) {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(file);
+          reader.onload = () => resolve((reader.result as string).split(',')[1]);
+          reader.onerror = reject;
+        });
+        
+        id = await aiService.extractBatchIdFromImage(base64, file.type) || '';
+      }
+
       if (id) {
         setBatchId(id);
         setScanHighlight(true);
         setTimeout(() => setScanHighlight(false), 2000);
+      } else {
+        alert("Verification Failed: Could not extract a valid Batch ID from the image (QR or Text).");
       }
     } catch (err) {
-      alert("Verification Failed: No detectable QR signature.");
+      console.error("Retail file processing error:", err);
+      alert("Verification Failed: No detectable QR signature or Batch ID found.");
     } finally {
       setAnalyzingFile(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+      try {
+        html5QrCode.clear();
+      } catch (e) {}
     }
   };
 
   const handleReceive = async (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanBatchId = batchId.trim().toUpperCase();
+    if (!cleanBatchId) return;
     setLoading(true);
     try {
+      // Validate batch exists first
+      const batch = await dbService.getBatch(cleanBatchId);
+      if (!batch) {
+        alert(`Validation Error: Batch ID "${cleanBatchId}" does not exist in the AgriChain registry. Please verify the ID or scan again.`);
+        setLoading(false);
+        return;
+      }
+
       const pos: any = await new Promise((res, rej) => 
         navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 5000 })
       ).catch(() => ({ coords: { latitude: 0, longitude: 0 } }));
+      
       const lat = pos.coords.latitude;
       const lng = pos.coords.longitude;
+      
       const event: BatchEvent = {
         id: Math.random().toString(36).substr(2, 9),
-        batchId,
+        batchId: cleanBatchId,
         role: UserRole.RETAILER,
         userName: user.name,
         timestamp: Date.now(),
         latitude: lat || null,
         longitude: lng || null,
         details: { action: 'Arrival Receipt Verified', shelf: shelfLocation },
-        dataHash: blockchainService.generateDataHash({ batchId, shelfLocation, lat, lng }),
+        dataHash: blockchainService.generateDataHash({ batchId: cleanBatchId, shelfLocation, lat, lng }),
         txHash: await blockchainService.submitToBlockchain("retail-block")
       };
+      
       await dbService.addEvent(event);
-      onTrace(batchId);
+      await dbService.updateBatchStatus(cleanBatchId, 'RETAILED');
+      onTrace(cleanBatchId);
     } catch (err: any) {
-      alert("Verification Error: Check connection.");
+      alert("Verification Error: Check blockchain node connection.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-10 animate-spring pb-20 px-4">
-      <div id="retail-hidden-reader" className="hidden"></div>
+    <div className="max-w-7xl mx-auto space-y-12 animate-spring pb-20 px-4 pt-4">
       <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-gray-100 pb-8">
-        <div>
-          <h1 className="text-5xl font-black text-gray-900 tracking-tighter uppercase mb-2">Market Node</h1>
-          <p className="text-gray-400 font-bold uppercase tracking-widest text-[10px]">Merchant Registry: {user.name}</p>
+      
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-8 border-b border-gray-100 pb-12">
+        <div className="space-y-2">
+          <div className="flex items-center space-x-3 mb-2">
+            <div className="bg-indigo-600 p-2.5 rounded-xl text-white shadow-lg shadow-indigo-200">
+               <Store size={28} />
+            </div>
+            <span className="text-[10px] font-black uppercase text-indigo-600 tracking-[0.5em]">Market Protocol Node</span>
+          </div>
+          <h1 className="text-7xl font-black text-gray-900 tracking-tighter uppercase leading-none">Market Hub</h1>
+          <p className="text-gray-400 font-bold uppercase tracking-[0.3em] text-[10px]">Registry Node: <span className="text-gray-900">{user.name}</span></p>
         </div>
+        
         <div className="flex items-center space-x-4">
-           <div className={`px-4 py-2 rounded-full border text-[10px] font-black uppercase tracking-widest ${location ? 'bg-green-50 text-green-600 border-green-200' : 'bg-orange-50 text-orange-600 animate-pulse'}`}>
-              <MapPin size={12} className="inline mr-2" /> <span>{location ? 'Store Verified' : 'Locating Node...'}</span>
+           <div className={`px-6 py-3 rounded-[1.5rem] border text-[10px] font-black uppercase tracking-widest flex items-center space-x-3 transition-all ${location ? 'bg-indigo-50 text-indigo-600 border-indigo-200 shadow-xl' : 'bg-orange-50 text-orange-600 border-orange-200 animate-pulse'}`}>
+              <MapPin size={14} className={location ? 'animate-bounce' : ''} />
+              <span>{location ? `STORE AUTH: ${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}` : 'Locating Marketplace...'}</span>
            </div>
-           <button onClick={startScanner} className="p-3 bg-gray-100 rounded-2xl hover:bg-gray-200 transition-all active:scale-90 border border-gray-200">
-              <RefreshCw size={20} className={cameraActive ? '' : 'animate-spin text-indigo-600'} />
+           <button onClick={startScanner} className="p-4 bg-white rounded-2xl hover:bg-gray-50 transition-all active:scale-90 border border-gray-100 shadow-xl group">
+              <RefreshCw size={24} className={`text-indigo-600 transition-transform duration-500 ${cameraActive ? 'group-hover:rotate-180' : 'animate-spin'}`} />
            </button>
         </div>
       </div>
-      <div className="grid lg:grid-cols-5 gap-10">
-        <div className={`lg:col-span-3 bg-black rounded-[4rem] relative overflow-hidden min-h-[550px] border-4 transition-all duration-500 ${scanHighlight ? 'border-indigo-500 scale-[1.01]' : 'border-gray-800'}`}>
-          <div id="retail-scanner-view" className="absolute inset-0 w-full h-full [&_video]:object-cover"></div>
-          {!cameraActive && (
-             <div className="absolute inset-0 flex flex-col items-center justify-center text-white/50 space-y-4">
-                <Camera size={48} className="animate-pulse" />
-                <p className="text-[10px] font-black uppercase tracking-widest">Waking Market Sensor...</p>
-             </div>
-          )}
-          <div className="absolute inset-0 pointer-events-none z-20 flex items-center justify-center">
-             <div className={`w-80 h-80 border-4 rounded-[3.5rem] transition-all duration-300 relative ${scanHighlight ? 'border-white bg-indigo-500/30' : 'border-indigo-500/60'}`}>
-                {!scanHighlight && cameraActive && <div className="absolute left-0 w-full h-1 bg-indigo-400 animate-scan top-0"></div>}
-                {scanHighlight && <CheckCircle size={110} className="text-white animate-pulse" />}
-             </div>
+
+      <div className="grid lg:grid-cols-12 gap-12">
+        {/* Scanner Area */}
+        <div className="lg:col-span-7 relative group">
+          <div className={`bg-black rounded-[4.5rem] shadow-3xl relative overflow-hidden min-h-[600px] border-4 transition-all duration-700 ${scanHighlight ? 'border-indigo-400 scale-[1.01] shadow-[0_0_100px_rgba(79,70,229,0.3)]' : 'border-gray-800'}`}>
+            <div id="retailer-scanner-viewport" className="absolute inset-0 w-full h-full [&_video]:object-cover opacity-85"></div>
+            
+            <div className="absolute inset-0 pointer-events-none z-20">
+               <div className="absolute top-12 left-12 w-20 h-20 border-t-2 border-l-2 border-indigo-500/40 rounded-tl-[4rem]"></div>
+               <div className="absolute top-12 right-12 w-20 h-20 border-t-2 border-r-2 border-indigo-500/40 rounded-tr-[4rem]"></div>
+               <div className="absolute bottom-12 left-12 w-20 h-20 border-b-2 border-l-2 border-indigo-500/40 rounded-bl-[4rem]"></div>
+               <div className="absolute bottom-12 right-12 w-20 h-20 border-b-2 border-r-2 border-indigo-500/40 rounded-br-[4rem]"></div>
+
+               <div className="absolute inset-0 flex items-center justify-center">
+                  <div className={`w-80 h-80 border-2 rounded-full transition-all duration-700 relative ${scanHighlight ? 'border-white bg-indigo-500/30 scale-110' : 'border-indigo-500/20'}`}>
+                     <div className="absolute inset-[-10px] border border-white/5 rounded-full"></div>
+                     {scanHighlight && <div className="absolute inset-0 flex items-center justify-center"> <CheckCircle size={100} className="text-white animate-bounce" /> </div>}
+                  </div>
+               </div>
+            </div>
+
+            {!cameraActive && (
+               <div className="absolute inset-0 flex flex-col items-center justify-center text-white/50 space-y-6 z-30 bg-gray-900/70 backdrop-blur-xl">
+                  <div className="bg-indigo-500/10 p-14 rounded-full animate-pulse border border-indigo-500/20">
+                     <ShoppingCart size={70} className="text-indigo-400" />
+                  </div>
+                  <p className="text-xl font-black uppercase tracking-[0.5em]">Network Optical Sync</p>
+               </div>
+            )}
           </div>
-          <div className="absolute bottom-10 left-0 right-0 z-30 flex flex-col items-center space-y-4 px-8">
-            <button 
-              onClick={() => fileInputRef.current?.click()}
-              disabled={analyzingFile}
-              className="bg-white px-12 py-6 rounded-[2.5rem] text-gray-900 font-black uppercase text-sm shadow-2xl transition-all active:scale-95 flex items-center space-x-4 border-2 border-transparent hover:border-indigo-600"
-            >
-              {analyzingFile ? <Loader2 size={24} className="animate-spin" /> : <ImageIcon size={24} className="text-indigo-600" />}
-              <span>{analyzingFile ? 'Decoding...' : 'Gallery Manifest Upload'}</span>
-            </button>
-          </div>
+
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            disabled={analyzingFile}
+            className="absolute -bottom-8 left-1/2 -translate-x-1/2 z-40 bg-white px-14 py-8 rounded-[3rem] text-gray-900 font-black uppercase text-sm shadow-[0_30px_60px_rgba(0,0,0,0.15)] transition-all hover:-translate-y-2 active:scale-95 flex items-center space-x-4 border border-indigo-50"
+          >
+            {analyzingFile ? <Loader2 size={24} className="animate-spin text-indigo-600" /> : <ImageIcon size={24} className="text-indigo-600" />}
+            <span>{analyzingFile ? 'Decoding Proof...' : 'Analyze Photo Manifest'}</span>
+          </button>
         </div>
-        <div className="lg:col-span-2 bg-white p-12 rounded-[4rem] shadow-2xl border border-gray-100 flex flex-col">
-          <form onSubmit={handleReceive} className="space-y-8 flex-grow">
-            <div className="space-y-4">
-              <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.4em] ml-2">Verified Identity</label>
-              <input required value={batchId} onChange={(e) => setBatchId(e.target.value.toUpperCase())} placeholder="POINT AT MANIFEST" className={`w-full px-8 py-7 rounded-[2.2rem] font-black text-2xl outline-none border-2 transition-all ${scanHighlight ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-transparent bg-gray-50 focus:border-indigo-500'}`} />
+
+        {/* Action Panel */}
+        <div className="lg:col-span-5 flex flex-col space-y-8 pt-10 lg:pt-0">
+          <div className="bg-white p-12 rounded-[4.5rem] shadow-3xl border border-gray-100 relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-80 h-80 bg-indigo-500/5 blur-[100px] rounded-full group-hover:bg-indigo-500/10 transition-all duration-1000"></div>
+            
+            <div className="mb-12 relative z-10">
+               <h2 className="text-4xl font-black text-gray-900 tracking-tighter uppercase leading-none">Arrival Seal</h2>
+               <p className="text-gray-400 font-bold text-xs uppercase tracking-widest mt-2 italic">Confirm marketplace entry for the batch</p>
             </div>
-            <div className="space-y-4">
-              <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.4em] ml-2">Shelf Placement</label>
-              <input required value={shelfLocation} onChange={(e) => setShelfLocation(e.target.value)} className="w-full px-8 py-6 bg-gray-50 rounded-[1.8rem] font-bold outline-none border-2 border-transparent focus:border-indigo-500 shadow-inner" />
-            </div>
-            <button type="submit" disabled={loading || !batchId} className="w-full bg-indigo-600 text-white py-9 rounded-[3.5rem] font-black uppercase text-xl hover:bg-indigo-700 transition-all shadow-2xl disabled:opacity-30 mt-auto">
-              {loading ? <Loader2 className="animate-spin mx-auto" size={32} /> : 'SEAL RECEPTION'}
-            </button>
-          </form>
+
+            <form onSubmit={handleReceive} className="space-y-10 relative z-10">
+              <div className="space-y-4">
+                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.6em] ml-2">Product Hash Label</label>
+                <input 
+                  required 
+                  value={batchId} 
+                  onChange={(e) => setBatchId(e.target.value.toUpperCase())} 
+                  placeholder="SCAN OR TYPE HASH" 
+                  className={`w-full px-10 py-8 rounded-[2.5rem] font-mono font-black text-2xl outline-none border-2 transition-all shadow-inner ${scanHighlight ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-transparent bg-gray-50 focus:border-indigo-500'}`} 
+                />
+              </div>
+
+              <div className="space-y-4">
+                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-[0.6em] ml-2">Market Placement</label>
+                <div className="relative">
+                  <input 
+                    required 
+                    value={shelfLocation} 
+                    onChange={(e) => setShelfLocation(e.target.value)} 
+                    className="w-full px-10 py-7 bg-gray-50 rounded-[2.2rem] font-black outline-none border-2 border-transparent focus:border-indigo-500 shadow-inner" 
+                    placeholder="e.g. Aisle 4 / Shelf B"
+                  />
+                  <Layers className="absolute right-10 top-1/2 -translate-y-1/2 text-gray-300" size={24} />
+                </div>
+              </div>
+
+              <button 
+                type="submit" 
+                disabled={loading || !batchId} 
+                className="w-full bg-indigo-600 text-white py-10 rounded-[3.5rem] font-black uppercase text-2xl hover:bg-indigo-700 transition-all shadow-2xl shadow-indigo-200 active:scale-[0.98] disabled:opacity-30 mt-8 group"
+              >
+                {loading ? <Loader2 className="animate-spin mx-auto" size={36} /> : (
+                  <div className="flex items-center justify-center space-x-5">
+                    <ShieldCheck size={32} className="group-hover:scale-110 transition-transform" />
+                    <span>Seal Marketplace Record</span>
+                  </div>
+                )}
+              </button>
+            </form>
+          </div>
+
+          <div className="bg-indigo-950 p-12 rounded-[4rem] text-white flex flex-col space-y-6 shadow-2xl relative overflow-hidden group">
+             <div className="absolute bottom-0 right-0 p-8 opacity-10 group-hover:scale-125 transition-transform"> <Tag size={120} /> </div>
+             <div className="flex items-center space-x-5">
+                <div className="bg-white/10 p-5 rounded-[2rem]">
+                  <Box size={32} className="text-indigo-400" />
+                </div>
+                <h4 className="font-black uppercase tracking-tighter text-2xl">Inventory Flow</h4>
+             </div>
+             <p className="text-indigo-200/60 font-bold text-sm leading-relaxed relative z-10">Every arrival event creates a verifiable link in the consumer transparency portal.</p>
+             <div className="pt-4 flex items-center space-x-3 text-indigo-400 font-black text-[10px] uppercase tracking-widest cursor-pointer hover:text-indigo-300 transition-colors" onClick={() => batchId && onTrace(batchId)}>
+                <span>Audit Chain History</span>
+                <RefreshCw size={12} />
+             </div>
+          </div>
         </div>
       </div>
-      <style>{` @keyframes scan { 0% { top: 0; } 100% { top: 100%; } } .animate-scan { animation: scan 1.2s ease-in-out infinite; } `}</style>
     </div>
   );
 };

@@ -36,5 +36,41 @@ export const aiService = {
       console.error("AI Node Error:", error);
       return "The AI Protocol Node is currently undergoing maintenance. Please try again shortly.";
     }
+  },
+
+  async extractBatchIdFromImage(base64Image: string, mimeType: string): Promise<string | null> {
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-flash-lite-latest',
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                data: base64Image,
+                mimeType: mimeType
+              }
+            },
+            {
+              text: "Extract the AgriChain Batch ID from this image. The Batch ID typically looks like 'ABCDEF-1234' (alphanumeric characters, a hyphen, and digits). Return ONLY the Batch ID string. If no Batch ID is found, return 'NONE'."
+            }
+          ]
+        },
+        config: {
+          temperature: 0.1,
+          topP: 1,
+        }
+      });
+
+      const text = response.text?.trim() || 'NONE';
+      if (text === 'NONE' || text.length < 4) return null;
+      
+      // Clean up the response in case it returned extra text
+      const pattern = /([A-Z0-9]{4,10}-\d{3,6})/i;
+      const match = text.match(pattern);
+      return match ? match[1].toUpperCase() : null;
+    } catch (error) {
+      console.error("AI Extraction Error:", error);
+      return null;
+    }
   }
 };

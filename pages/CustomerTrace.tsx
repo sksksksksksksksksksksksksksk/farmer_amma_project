@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { TraceData, UserRole, BatchEvent } from '../types';
 import { dbService } from '../services/dbService';
+import { aiService } from '../services/aiService';
 import { 
   Search, MapPin, ShieldCheck, QrCode, Truck, 
   ShoppingCart, Loader2, Camera, X, RefreshCcw, 
@@ -25,6 +26,7 @@ const CustomerTrace: React.FC<CustomerTraceProps> = ({ batchId: initialBatchId }
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scanHighlight, setScanHighlight] = useState(false);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'timeline' | 'table'>('timeline');
   
   const scannerRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -36,16 +38,50 @@ const CustomerTrace: React.FC<CustomerTraceProps> = ({ batchId: initialBatchId }
   }, [initialBatchId]);
 
   const parseQrContent = (text: string) => {
-    let id = text;
+    if (!text) return '';
+    
+    // 1. Try to match the standard batch ID pattern (e.g., ABCDEF-1234)
+    const pattern = /([A-Z0-9]{4,10}-\d{3,6})/i;
+    const match = text.match(pattern);
+    if (match) return match[1].toUpperCase();
+    
+    // 2. Try to extract from URL hash (e.g., /#trace/ABCDEF-1234)
     if (text.includes('/#trace/')) {
-      id = text.split('/#trace/')[1].split('?')[0];
-    } else if (text.includes('trace=')) {
-      id = text.split('trace=')[1].split('&')[0];
-    } else if (text.startsWith('http')) {
-      const parts = text.split('/');
-      id = parts[parts.length - 1];
+      const parts = text.split('/#trace/');
+      if (parts[1]) {
+        const id = parts[1].split(/[?#]/)[0];
+        if (id) return id.toUpperCase();
+      }
     }
-    return id.trim();
+    
+    // 3. Try to extract from query param (e.g., ?trace=ABCDEF-1234)
+    if (text.includes('trace=')) {
+      const parts = text.split('trace=');
+      if (parts[1]) {
+        const id = parts[1].split(/[&#]/)[0];
+        if (id) return id.toUpperCase();
+      }
+    }
+
+    // 4. Fallback: if it's a URL, take the last segment
+    if (text.startsWith('http')) {
+      try {
+        const url = new URL(text);
+        const pathParts = url.pathname.split('/').filter(Boolean);
+        if (pathParts.length > 0) {
+          const lastPart = pathParts[pathParts.length - 1];
+          if (lastPart && lastPart.length >= 4) return lastPart.toUpperCase();
+        }
+        // Also check hash in URL object
+        if (url.hash.startsWith('#trace/')) {
+          return url.hash.replace('#trace/', '').toUpperCase();
+        }
+      } catch (e) {
+        // Not a valid URL, continue to fallback
+      }
+    }
+    
+    return text.trim().toUpperCase();
   };
 
   const handleSearch = async (id: string) => {
@@ -126,25 +162,51 @@ const CustomerTrace: React.FC<CustomerTraceProps> = ({ batchId: initialBatchId }
     if (!readerElement) {
       readerElement = document.createElement("div");
       readerElement.id = "trace-reader-hidden";
-      readerElement.style.display = "none";
+      readerElement.style.visibility = "hidden";
+      readerElement.style.position = "absolute";
+      readerElement.style.left = "-9999px";
+      readerElement.style.width = "100px";
+      readerElement.style.height = "100px";
       document.body.appendChild(readerElement);
     }
 
     const html5QrCode = new Html5Qrcode("trace-reader-hidden");
     try {
-      const decodedText = await html5QrCode.scanFile(file, true);
-      const id = parseQrContent(decodedText);
+      // Try standard QR scan first
+      let id = '';
+      try {
+        const decodedText = await html5QrCode.scanFile(file, false);
+        id = parseQrContent(decodedText);
+      } catch (qrErr) {
+        console.log("QR Scan failed, attempting AI extraction...");
+      }
+
+      // If QR scan failed or returned no ID, try AI extraction
+      if (!id) {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(file);
+          reader.onload = () => resolve((reader.result as string).split(',')[1]);
+          reader.onerror = reject;
+        });
+        
+        id = await aiService.extractBatchIdFromImage(base64, file.type) || '';
+      }
+
       if (id) {
         handleSearch(id.toUpperCase());
       } else {
         setErrorType('SCAN_FAILED');
       }
     } catch (err) {
-      console.error("File scan error:", err);
+      console.error("File processing error:", err);
       setErrorType('SCAN_FAILED');
     } finally {
       setAnalyzingFile(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+      try {
+        html5QrCode.clear();
+      } catch (e) {}
     }
   };
 
@@ -293,111 +355,192 @@ const CustomerTrace: React.FC<CustomerTraceProps> = ({ batchId: initialBatchId }
                    <Navigation size={24} className="text-green-500" />
                    <span className="font-mono text-2xl font-black text-white">#{traceData.batch.id}</span>
                  </div>
+                 <div className={`px-10 py-5 rounded-3xl border flex items-center space-x-4 shadow-lg ${
+                   traceData.batch.status === 'RETAILED' ? 'bg-indigo-50 border-indigo-100 text-indigo-700' :
+                   traceData.batch.status === 'IN_TRANSIT' ? 'bg-blue-50 border-blue-100 text-blue-700' :
+                   'bg-green-50 border-green-100 text-green-700'
+                 }`}>
+                   <Activity size={24} />
+                   <span className="font-black uppercase text-xs tracking-widest">Status: {traceData.batch.status}</span>
+                 </div>
                  <div className="bg-green-50 px-10 py-5 rounded-3xl border border-green-100 flex items-center space-x-4 text-green-700">
                    <ShieldCheck size={24} />
                    <span className="font-black uppercase text-xs tracking-widest">Protocol Sealed</span>
                  </div>
               </div>
             </div>
-          </div>
-
-          {/* Timeline Link Formation */}
-          <div className="relative max-w-6xl mx-auto pl-12 lg:pl-0">
-            {/* The "Link" Line */}
-            <div className="absolute left-6 lg:left-1/2 top-0 bottom-0 w-2 bg-gradient-to-b from-green-500 via-blue-500 to-indigo-500 opacity-20 -translate-x-1/2 rounded-full"></div>
-
-            <div className="space-y-24">
-              {traceData.events.map((event, idx) => (
-                <div key={event.id} className={`relative flex flex-col ${idx % 2 === 0 ? 'lg:flex-row' : 'lg:flex-row-reverse'} items-center gap-12 group`}>
-                  
-                  {/* Timeline Dot */}
-                  <div className={`absolute left-6 lg:left-1/2 top-10 w-12 h-12 -translate-x-1/2 z-10 rounded-full border-8 border-white shadow-2xl transition-all duration-500 group-hover:scale-125 ${getRoleColor(event.role)}`}>
-                    <div className="absolute inset-0 bg-white/40 animate-ping rounded-full"></div>
-                  </div>
-
-                  {/* Card Panel */}
-                  <div className={`w-full lg:w-[45%] bg-white p-12 rounded-[4rem] border border-gray-100 shadow-2xl relative overflow-hidden group-hover:shadow-[0_60px_100px_-20px_rgba(0,0,0,0.1)] transition-all duration-500 ${idx % 2 === 0 ? 'lg:text-right' : 'lg:text-left'}`}>
-                    
-                    <div className={`flex items-center gap-6 mb-10 ${idx % 2 === 0 ? 'lg:justify-end' : 'lg:justify-start'}`}>
-                      <div className="order-1">
-                        <span className="text-[10px] font-black uppercase text-gray-400 tracking-[0.4em] block mb-1 italic">Verified Node</span>
-                        <h4 className="font-black text-2xl text-gray-900 leading-none">{event.userName}</h4>
-                      </div>
-                      <div className={`p-5 rounded-[2rem] bg-gray-50 border border-gray-100 ${idx % 2 === 0 ? 'lg:order-2' : 'lg:order-first'}`}>
-                        {getRoleIcon(event.role)}
-                      </div>
-                    </div>
-
-                    <div className="mb-10">
-                      <h5 className="text-4xl lg:text-5xl font-black text-gray-900 tracking-tighter uppercase leading-tight mb-3">{event.details.action}</h5>
-                      <div className={`flex items-center gap-3 text-gray-400 ${idx % 2 === 0 ? 'lg:justify-end' : 'lg:justify-start'}`}>
-                        <Calendar size={18} />
-                        <span className="text-xs font-bold uppercase tracking-widest">{new Date(event.timestamp).toLocaleString()}</span>
-                      </div>
-                    </div>
-
-                    {/* Data Visualization Section */}
-                    <div className="space-y-6 pt-10 border-t border-gray-100">
-                      
-                      {/* GPS Precision */}
-                      <div className={`flex flex-col ${idx % 2 === 0 ? 'lg:items-end' : 'lg:items-start'} space-y-3`}>
-                        <div className="flex items-center space-x-3 text-blue-600">
-                          <MapPin size={18} />
-                          <span className="text-[10px] font-black uppercase tracking-[0.3em]">GPS Spatial Precision</span>
-                        </div>
-                        <div className="flex items-center space-x-3 bg-blue-50/70 p-4 rounded-[2rem] border border-blue-100/50 w-full lg:w-fit">
-                           <div className="px-4 border-r border-blue-200">
-                              <p className="text-[8px] font-black text-blue-400 uppercase tracking-widest">Latitude</p>
-                              <p className="font-mono font-black text-lg text-blue-800">{event.latitude ? event.latitude.toFixed(7) : '---.---'}</p>
-                           </div>
-                           <div className="px-4">
-                              <p className="text-[8px] font-black text-blue-400 uppercase tracking-widest">Longitude</p>
-                              <p className="font-mono font-black text-lg text-blue-800">{event.longitude ? event.longitude.toFixed(7) : '---.---'}</p>
-                           </div>
-                        </div>
-                      </div>
-
-                      {/* Cryptographic Hashes */}
-                      <div className={`flex flex-col ${idx % 2 === 0 ? 'lg:items-end' : 'lg:items-start'} space-y-4 mt-6`}>
-                        <div className="flex items-center space-x-3 text-emerald-600">
-                          <Cpu size={18} />
-                          <span className="text-[10px] font-black uppercase tracking-[0.3em]">Ledger Integrity Hashes</span>
-                        </div>
-                        <div className="w-full space-y-3">
-                           {/* Data Hash */}
-                           <div 
-                            onClick={() => handleCopy(event.dataHash)}
-                            className="group/hash flex items-center justify-between bg-gray-900 text-white/50 hover:text-white px-6 py-4 rounded-2xl transition-all cursor-pointer font-mono text-[10px]"
-                           >
-                             <div className="flex items-center space-x-3 overflow-hidden">
-                               <Hash size={14} className="flex-shrink-0 text-emerald-500" />
-                               <span className="truncate">DATA: {event.dataHash}</span>
-                             </div>
-                             {copiedHash === event.dataHash ? <Check size={14} className="text-green-500" /> : <Copy size={14} className="opacity-0 group-hover/hash:opacity-100 flex-shrink-0" />}
-                           </div>
-                           {/* Block Tx Hash */}
-                           <div className="flex items-center justify-between bg-emerald-950 text-emerald-400 px-6 py-4 rounded-2xl font-mono text-[10px] border border-emerald-900 shadow-inner">
-                             <div className="flex items-center space-x-3 overflow-hidden">
-                               <ShieldCheck size={14} className="flex-shrink-0" />
-                               <span className="truncate">BLOCK_TX: {event.txHash}</span>
-                             </div>
-                             <ExternalLink size={14} className="flex-shrink-0 cursor-pointer hover:scale-125 transition-transform" />
-                           </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Role BG Overlay */}
-                    <div className="absolute -bottom-12 -right-6 text-[12rem] font-black text-gray-900 opacity-[0.03] select-none pointer-events-none italic tracking-tighter">
-                       {event.role}
-                    </div>
-                  </div>
-
-                  <div className="hidden lg:block lg:w-[45%]"></div>
-                </div>
-              ))}
+            
+            {/* View Toggle */}
+            <div className="absolute top-10 right-10 flex bg-gray-100 p-2 rounded-3xl">
+              <button 
+                onClick={() => setViewMode('timeline')}
+                className={`px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'timeline' ? 'bg-white text-gray-900 shadow-md' : 'text-gray-400 hover:text-gray-600'}`}
+              >
+                Timeline
+              </button>
+              <button 
+                onClick={() => setViewMode('table')}
+                className={`px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${viewMode === 'table' ? 'bg-white text-gray-900 shadow-md' : 'text-gray-400 hover:text-gray-600'}`}
+              >
+                Table
+              </button>
             </div>
           </div>
+
+          {viewMode === 'timeline' ? (
+            /* Timeline Link Formation */
+            <div className="relative max-w-6xl mx-auto pl-12 lg:pl-0">
+              {/* The "Link" Line */}
+              <div className="absolute left-6 lg:left-1/2 top-0 bottom-0 w-2 bg-gradient-to-b from-green-500 via-blue-500 to-indigo-500 opacity-20 -translate-x-1/2 rounded-full"></div>
+
+              <div className="space-y-24">
+                {traceData.events.map((event, idx) => (
+                  <div key={event.id} className={`relative flex flex-col ${idx % 2 === 0 ? 'lg:flex-row' : 'lg:flex-row-reverse'} items-center gap-12 group`}>
+                    
+                    {/* Timeline Dot */}
+                    <div className={`absolute left-6 lg:left-1/2 top-10 w-12 h-12 -translate-x-1/2 z-10 rounded-full border-8 border-white shadow-2xl transition-all duration-500 group-hover:scale-125 ${getRoleColor(event.role)}`}>
+                      <div className="absolute inset-0 bg-white/40 animate-ping rounded-full"></div>
+                    </div>
+
+                    {/* Card Panel */}
+                    <div className={`w-full lg:w-[45%] bg-white p-12 rounded-[4rem] border border-gray-100 shadow-2xl relative overflow-hidden group-hover:shadow-[0_60px_100px_-20px_rgba(0,0,0,0.1)] transition-all duration-500 ${idx % 2 === 0 ? 'lg:text-right' : 'lg:text-left'}`}>
+                      
+                      <div className={`flex items-center gap-6 mb-10 ${idx % 2 === 0 ? 'lg:justify-end' : 'lg:justify-start'}`}>
+                        <div className="order-1">
+                          <span className="text-[10px] font-black uppercase text-gray-400 tracking-[0.4em] block mb-1 italic">Verified Node</span>
+                          <h4 className="font-black text-2xl text-gray-900 leading-none">{event.userName}</h4>
+                        </div>
+                        <div className={`p-5 rounded-[2rem] bg-gray-50 border border-gray-100 ${idx % 2 === 0 ? 'lg:order-2' : 'lg:order-first'}`}>
+                          {getRoleIcon(event.role)}
+                        </div>
+                      </div>
+
+                      <div className="mb-10">
+                        <h5 className="text-4xl lg:text-5xl font-black text-gray-900 tracking-tighter uppercase leading-tight mb-3">{event.details.action}</h5>
+                        <div className={`flex items-center gap-3 text-gray-400 ${idx % 2 === 0 ? 'lg:justify-end' : 'lg:justify-start'}`}>
+                          <Calendar size={18} />
+                          <span className="text-xs font-bold uppercase tracking-widest">{new Date(event.timestamp).toLocaleString()}</span>
+                        </div>
+                      </div>
+
+                      {/* Data Visualization Section */}
+                      <div className="space-y-6 pt-10 border-t border-gray-100">
+                        
+                        {/* GPS Precision */}
+                        <div className={`flex flex-col ${idx % 2 === 0 ? 'lg:items-end' : 'lg:items-start'} space-y-3`}>
+                          <div className="flex items-center space-x-3 text-blue-600">
+                            <MapPin size={18} />
+                            <span className="text-[10px] font-black uppercase tracking-[0.3em]">GPS Spatial Precision</span>
+                          </div>
+                          <div className="flex items-center space-x-3 bg-blue-50/70 p-4 rounded-[2rem] border border-blue-100/50 w-full lg:w-fit">
+                             <div className="px-4 border-r border-blue-200">
+                                <p className="text-[8px] font-black text-blue-400 uppercase tracking-widest">Latitude</p>
+                                <p className="font-mono font-black text-lg text-blue-800">{event.latitude ? event.latitude.toFixed(7) : '---.---'}</p>
+                             </div>
+                             <div className="px-4">
+                                <p className="text-[8px] font-black text-blue-400 uppercase tracking-widest">Longitude</p>
+                                <p className="font-mono font-black text-lg text-blue-800">{event.longitude ? event.longitude.toFixed(7) : '---.---'}</p>
+                             </div>
+                          </div>
+                        </div>
+
+                        {/* Cryptographic Hashes */}
+                        <div className={`flex flex-col ${idx % 2 === 0 ? 'lg:items-end' : 'lg:items-start'} space-y-4 mt-6`}>
+                          <div className="flex items-center space-x-3 text-emerald-600">
+                            <Cpu size={18} />
+                            <span className="text-[10px] font-black uppercase tracking-[0.3em]">Ledger Integrity Hashes</span>
+                          </div>
+                          <div className="w-full space-y-3">
+                             {/* Data Hash */}
+                             <div 
+                              onClick={() => handleCopy(event.dataHash)}
+                              className="group/hash flex items-center justify-between bg-gray-900 text-white/50 hover:text-white px-6 py-4 rounded-2xl transition-all cursor-pointer font-mono text-[10px]"
+                             >
+                               <div className="flex items-center space-x-3 overflow-hidden">
+                                 <Hash size={14} className="flex-shrink-0 text-emerald-500" />
+                                 <span className="truncate">DATA: {event.dataHash}</span>
+                               </div>
+                               {copiedHash === event.dataHash ? <Check size={14} className="text-green-500" /> : <Copy size={14} className="opacity-0 group-hover/hash:opacity-100 flex-shrink-0" />}
+                             </div>
+                             {/* Block Tx Hash */}
+                             <div className="flex items-center justify-between bg-emerald-950 text-emerald-400 px-6 py-4 rounded-2xl font-mono text-[10px] border border-emerald-900 shadow-inner">
+                               <div className="flex items-center space-x-3 overflow-hidden">
+                                 <ShieldCheck size={14} className="flex-shrink-0" />
+                                 <span className="truncate">BLOCK_TX: {event.txHash}</span>
+                               </div>
+                               <ExternalLink size={14} className="flex-shrink-0 cursor-pointer hover:scale-125 transition-transform" />
+                             </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Role BG Overlay */}
+                      <div className="absolute -bottom-12 -right-6 text-[12rem] font-black text-gray-900 opacity-[0.03] select-none pointer-events-none italic tracking-tighter">
+                         {event.role}
+                      </div>
+                    </div>
+
+                    <div className="hidden lg:block lg:w-[45%]"></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            /* Table View */
+            <div className="bg-white rounded-[4rem] border border-gray-100 shadow-2xl overflow-hidden animate-spring">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-100">
+                      <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.4em] text-gray-400">Timestamp</th>
+                      <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.4em] text-gray-400">Node</th>
+                      <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.4em] text-gray-400">Role</th>
+                      <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.4em] text-gray-400">Action</th>
+                      <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.4em] text-gray-400">Location</th>
+                      <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.4em] text-gray-400">Ledger Hash</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {traceData.events.map((event) => (
+                      <tr key={event.id} className="hover:bg-gray-50/50 transition-colors group">
+                        <td className="px-10 py-8 whitespace-nowrap">
+                          <p className="text-xs font-bold text-gray-900">{new Date(event.timestamp).toLocaleDateString()}</p>
+                          <p className="text-[10px] text-gray-400 font-medium">{new Date(event.timestamp).toLocaleTimeString()}</p>
+                        </td>
+                        <td className="px-10 py-8">
+                          <p className="text-sm font-black text-gray-900">{event.userName}</p>
+                        </td>
+                        <td className="px-10 py-8">
+                          <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest text-white ${getRoleColor(event.role)}`}>
+                            {event.role}
+                          </span>
+                        </td>
+                        <td className="px-10 py-8">
+                          <p className="text-sm font-bold text-gray-900">{event.details.action}</p>
+                        </td>
+                        <td className="px-10 py-8">
+                          <p className="text-[10px] font-mono font-bold text-blue-600">
+                            {event.latitude?.toFixed(4)}, {event.longitude?.toFixed(4)}
+                          </p>
+                        </td>
+                        <td className="px-10 py-8 max-w-[200px]">
+                          <div 
+                            onClick={() => handleCopy(event.dataHash)}
+                            className="flex items-center space-x-2 cursor-pointer group/copy"
+                          >
+                            <span className="text-[10px] font-mono text-gray-400 truncate group-hover/copy:text-emerald-600 transition-colors">
+                              {event.dataHash}
+                            </span>
+                            {copiedHash === event.dataHash ? <Check size={12} className="text-green-500" /> : <Copy size={12} className="text-gray-300 opacity-0 group-hover/copy:opacity-100" />}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

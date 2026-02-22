@@ -20,6 +20,7 @@ export const dbService = {
       harvestDate: b.harvest_date,
       latitude: b.latitude,
       longitude: b.longitude,
+      status: b.status || 'HARVESTED',
       createdAt: new Date(b.created_at).getTime()
     }));
   },
@@ -31,7 +32,12 @@ export const dbService = {
       .eq('id', id)
       .single();
     
-    if (error) return undefined;
+    if (error) {
+      if (error.code !== 'PGRST116') { // PGRST116 is "no rows returned"
+        console.error("Get Batch Error:", error);
+      }
+      return undefined;
+    }
     return {
       ...data,
       farmerId: data.farmer_id,
@@ -39,6 +45,7 @@ export const dbService = {
       harvestDate: data.harvest_date,
       latitude: data.latitude,
       longitude: data.longitude,
+      status: data.status || 'HARVESTED',
       createdAt: new Date(data.created_at).getTime()
     };
   },
@@ -55,7 +62,8 @@ export const dbService = {
         harvest_date: batch.harvestDate,
         location: batch.location,
         latitude: batch.latitude,
-        longitude: batch.longitude
+        longitude: batch.longitude,
+        status: 'HARVESTED'
       }]);
     
     if (error) {
@@ -114,5 +122,17 @@ export const dbService = {
     if (!batch) return null;
     const events = await dbService.getEvents(batchId);
     return { batch, events };
+  },
+
+  updateBatchStatus: async (id: string, status: string): Promise<void> => {
+    const { error } = await supabase
+      .from('batches')
+      .update({ status })
+      .eq('id', id);
+    
+    if (error) {
+      console.error("Update Status Error:", error);
+      throw new Error(`Status Update Failed: ${error.message}`);
+    }
   }
 };

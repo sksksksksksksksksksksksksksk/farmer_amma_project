@@ -20,10 +20,21 @@ export const authService = {
     const password = "agrichain_secure_node_123"; 
     
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const firebaseUser = userCredential.user;
+      let firebaseUser;
+      try {
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        firebaseUser = userCredential.user;
+      } catch (err: any) {
+        if (err.code === 'auth/email-already-in-use') {
+          // If already exists, attempt to login and then sync profile (Idempotent Signup)
+          const loginRes = await signInWithEmailAndPassword(auth, email, password);
+          firebaseUser = loginRes.user;
+        } else {
+          throw err;
+        }
+      }
 
-      // Sync with Supabase Profiles
+      // Sync with Supabase Profiles (Upsert ensures we don't fail if record exists)
       const { error: profileError } = await supabase
         .from('profiles')
         .upsert({
@@ -31,11 +42,11 @@ export const authService = {
           email: email,
           role: role,
           name: name
-        });
+        }, { onConflict: 'id' });
 
       if (profileError) {
         console.error("Supabase Profile Sync Detail:", profileError);
-        throw new Error(profileError.message || "Failed to sync profile to database. Check network connection.");
+        throw new Error("Registry synchronization failed. Please check your connection.");
       }
 
       const newUser: UserProfile = {
@@ -49,7 +60,7 @@ export const authService = {
       return newUser;
     } catch (err: any) {
       console.error("Signup Error:", err);
-      throw err;
+      throw new Error(err.message || "Protocol identity creation failed.");
     }
   },
 
@@ -60,20 +71,23 @@ export const authService = {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
 
-      // Fetch role and name from Supabase using an array check instead of .single()
-      // This prevents the PostgREST "Cannot coerce" error when 0 rows are returned.
+      // Fetch profile to verify role
       const { data: profiles, error: profileError } = await supabase
         .from('profiles')
         .select('*')
-        .eq('id', firebaseUser.uid)
-        .eq('role', role);
+        .eq('id', firebaseUser.uid);
       
       const profile = profiles && profiles.length > 0 ? profiles[0] : null;
       
       if (profileError || !profile) {
-        console.error("Supabase Login Fetch Error:", profileError);
         await signOut(auth);
-        throw new Error("Access Denied: Node Identity or Role mismatch in the registry.");
+        throw new Error("Node identity not found in the global registry.");
+      }
+
+      // Explicit role check to satisfy security requirement
+      if (profile.role !== role) {
+        await signOut(auth);
+        throw new Error(`Permission Denied: Identity exists but as a ${profile.role} node, not ${role}.`);
       }
 
       const user: UserProfile = {
@@ -87,12 +101,19 @@ export const authService = {
       return user;
     } catch (err: any) {
       console.error("Login Error:", err);
+      if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found') {
+        throw new Error("Invalid credentials or node not registered.");
+      }
       throw err;
     }
   },
 
   logout: async () => {
-    await signOut(auth);
+    try {
+      await signOut(auth);
+    } catch (e) {
+      console.error("Logout error:", e);
+    }
     localStorage.removeItem(AUTH_KEY);
   }
 };

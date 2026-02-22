@@ -24,6 +24,7 @@ export interface Batch {
   latitude: number | null;
   longitude: number | null;
   imageUrl?: string;
+  status: string;
   createdAt: number;
 }
 
