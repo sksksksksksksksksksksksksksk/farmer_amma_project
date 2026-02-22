@@ -24,6 +24,7 @@ const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTra
   const [cameraActive, setCameraActive] = useState(false);
   const [scanHighlight, setScanHighlight] = useState(false);
   const [analyzingFile, setAnalyzingFile] = useState(false);
+  const [recentEvents, setRecentEvents] = useState<BatchEvent[]>([]);
   
   const scannerRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -34,6 +35,13 @@ const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTra
     temp: '4°C',
     carrier: 'AgriLogistics Global'
   });
+
+  const fetchRecent = async () => {
+    try {
+      const events = await dbService.getEvents();
+      setRecentEvents(events.filter(e => e.role === UserRole.DISTRIBUTOR).reverse().slice(0, 10));
+    } catch (e) {}
+  };
 
   const safeStopScanner = async () => {
     if (scannerRef.current) {
@@ -140,6 +148,7 @@ const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTra
         null, { enableHighAccuracy: true }
       );
     }
+    fetchRecent();
     const timer = setTimeout(startScanner, 1000);
     return () => {
       isMounted.current = false;
@@ -248,6 +257,7 @@ const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTra
       await dbService.updateBatchStatus(cleanBatchId, 'IN_TRANSIT');
       alert(`Asset ${cleanBatchId} synchronized to distributed ledger and marked as IN_TRANSIT.`);
       setBatchId('');
+      fetchRecent();
     } catch (err: any) {
       alert("Submission Error: Check protocol synchronization or GPS.");
     } finally {
@@ -394,6 +404,74 @@ const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTra
                 <p className="text-[10px] font-black uppercase tracking-[0.4em] text-blue-400">Ledger Status</p>
                 <p className="text-sm font-bold opacity-80 mt-1">Live Synchronization with Sepolia Node Alpha-04.</p>
              </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Recent Shipments Table */}
+      <div className="mt-20 animate-spring stagger-3">
+        <div className="flex items-center justify-between mb-8 px-4">
+          <h2 className="text-4xl font-black text-gray-900 uppercase tracking-tighter">Recent Shipments</h2>
+          <span className="text-[10px] font-black uppercase tracking-widest text-blue-600 bg-blue-50 px-4 py-1.5 rounded-full border border-blue-100">Last 10 Records</span>
+        </div>
+        
+        <div className="bg-white rounded-[3.5rem] border border-gray-100 shadow-xl overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100">
+                  <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.4em] text-gray-400">Batch ID</th>
+                  <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.4em] text-gray-400">Telemetry</th>
+                  <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.4em] text-gray-400">GPS Node</th>
+                  <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.4em] text-gray-400">Timestamp</th>
+                  <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.4em] text-gray-400 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {recentEvents.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-10 py-20 text-center">
+                      <p className="text-gray-400 font-bold uppercase tracking-widest text-xs">No recent shipments recorded in this node.</p>
+                    </td>
+                  </tr>
+                ) : (
+                  recentEvents.map((event) => (
+                    <tr key={event.id} className="hover:bg-gray-50/50 transition-colors group">
+                      <td className="px-10 py-8">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                            <Truck size={16} />
+                          </div>
+                          <span className="font-mono text-sm font-black text-gray-900">{event.batchId}</span>
+                        </div>
+                      </td>
+                      <td className="px-10 py-8">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-[10px] font-black uppercase text-gray-400">Temp:</span>
+                          <span className="text-sm font-bold text-gray-900">{event.details.temp || 'N/A'}</span>
+                        </div>
+                      </td>
+                      <td className="px-10 py-8">
+                        <span className="text-[10px] font-mono font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-full">
+                          {event.latitude?.toFixed(4)}, {event.longitude?.toFixed(4)}
+                        </span>
+                      </td>
+                      <td className="px-10 py-8">
+                        <span className="text-xs text-gray-500 font-medium">{new Date(event.timestamp).toLocaleString()}</span>
+                      </td>
+                      <td className="px-10 py-8 text-right">
+                        <button 
+                          onClick={() => onTrace(event.batchId)}
+                          className="p-3 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
+                        >
+                          <ShieldCheck size={20} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>

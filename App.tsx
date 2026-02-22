@@ -72,6 +72,10 @@ const App: React.FC = () => {
               <Package className="text-white w-6 h-6" />
             </div>
             <span className="text-xl font-bold text-gray-900 tracking-tight">AgriChain</span>
+            <div className="hidden lg:flex items-center ml-4 px-3 py-1 bg-green-50 border border-green-100 rounded-full space-x-2">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              <span className="text-[10px] font-black uppercase tracking-widest text-green-600">Registry Active</span>
+            </div>
           </div>
 
           <nav className="flex items-center space-x-4">

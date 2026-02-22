@@ -25,11 +25,19 @@ const RetailerDashboard: React.FC<RetailerDashboardProps> = ({ user, onTrace }) 
   const [cameraActive, setCameraActive] = useState(false);
   const [scanHighlight, setScanHighlight] = useState(false);
   const [analyzingFile, setAnalyzingFile] = useState(false);
+  const [recentEvents, setRecentEvents] = useState<BatchEvent[]>([]);
   
   const scannerRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isMounted = useRef(true);
   const [shelfLocation, setShelfLocation] = useState('Organic Aisle - Bin 12');
+
+  const fetchRecent = async () => {
+    try {
+      const events = await dbService.getEvents();
+      setRecentEvents(events.filter(e => e.role === UserRole.RETAILER).reverse().slice(0, 10));
+    } catch (e) {}
+  };
 
   const safeStopScanner = async () => {
     if (scannerRef.current) {
@@ -136,6 +144,7 @@ const RetailerDashboard: React.FC<RetailerDashboardProps> = ({ user, onTrace }) 
         null, { enableHighAccuracy: true }
       );
     }
+    fetchRecent();
     const timer = setTimeout(startScanner, 1000);
     return () => { 
       isMounted.current = false;
@@ -240,6 +249,8 @@ const RetailerDashboard: React.FC<RetailerDashboardProps> = ({ user, onTrace }) 
       
       await dbService.addEvent(event);
       await dbService.updateBatchStatus(cleanBatchId, 'RETAILED');
+      setBatchId('');
+      fetchRecent();
       onTrace(cleanBatchId);
     } catch (err: any) {
       alert("Verification Error: Check blockchain node connection.");
@@ -379,6 +390,71 @@ const RetailerDashboard: React.FC<RetailerDashboardProps> = ({ user, onTrace }) 
                 <span>Audit Chain History</span>
                 <RefreshCw size={12} />
              </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Recent Inventory Table */}
+      <div className="mt-20 animate-spring stagger-3">
+        <div className="flex items-center justify-between mb-8 px-4">
+          <h2 className="text-4xl font-black text-gray-900 uppercase tracking-tighter">Market Inventory</h2>
+          <span className="text-[10px] font-black uppercase tracking-widest text-indigo-600 bg-indigo-50 px-4 py-1.5 rounded-full border border-indigo-100">Last 10 Records</span>
+        </div>
+        
+        <div className="bg-white rounded-[3.5rem] border border-gray-100 shadow-xl overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100">
+                  <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.4em] text-gray-400">Batch ID</th>
+                  <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.4em] text-gray-400">Placement</th>
+                  <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.4em] text-gray-400">GPS Node</th>
+                  <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.4em] text-gray-400">Timestamp</th>
+                  <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.4em] text-gray-400 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {recentEvents.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-10 py-20 text-center">
+                      <p className="text-gray-400 font-bold uppercase tracking-widest text-xs">No recent inventory arrivals recorded.</p>
+                    </td>
+                  </tr>
+                ) : (
+                  recentEvents.map((event) => (
+                    <tr key={event.id} className="hover:bg-gray-50/50 transition-colors group">
+                      <td className="px-10 py-8">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center">
+                            <Store size={16} />
+                          </div>
+                          <span className="font-mono text-sm font-black text-gray-900">{event.batchId}</span>
+                        </div>
+                      </td>
+                      <td className="px-10 py-8">
+                        <span className="text-sm font-bold text-gray-900">{event.details.shelf || 'N/A'}</span>
+                      </td>
+                      <td className="px-10 py-8">
+                        <span className="text-[10px] font-mono font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-full">
+                          {event.latitude?.toFixed(4)}, {event.longitude?.toFixed(4)}
+                        </span>
+                      </td>
+                      <td className="px-10 py-8">
+                        <span className="text-xs text-gray-500 font-medium">{new Date(event.timestamp).toLocaleString()}</span>
+                      </td>
+                      <td className="px-10 py-8 text-right">
+                        <button 
+                          onClick={() => onTrace(event.batchId)}
+                          className="p-3 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
+                        >
+                          <ShieldCheck size={20} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>

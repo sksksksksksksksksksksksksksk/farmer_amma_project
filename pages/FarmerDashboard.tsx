@@ -17,6 +17,7 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
   const [fetching, setFetching] = useState(true);
   const [selectedBatchQR, setSelectedBatchQR] = useState<Batch | null>(null);
   const [copied, setCopied] = useState(false);
+  const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [formData, setFormData] = useState({
     crop: '',
     seedType: '',
@@ -161,7 +162,23 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div className="animate-spring">
           <h1 className="text-6xl font-black text-gray-900 tracking-tighter uppercase mb-2">Inventory</h1>
-          <p className="text-green-600 font-black uppercase tracking-[0.3em] text-[10px] bg-green-50 px-4 py-1.5 rounded-full border border-green-100">Genesis Node: {user.name}</p>
+          <div className="flex items-center space-x-4">
+            <p className="text-green-600 font-black uppercase tracking-[0.3em] text-[10px] bg-green-50 px-4 py-1.5 rounded-full border border-green-100">Genesis Node: {user.name}</p>
+            <div className="bg-gray-100 p-1 rounded-xl flex">
+              <button 
+                onClick={() => setViewMode('grid')}
+                className={`px-4 py-1.5 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all ${viewMode === 'grid' ? 'bg-white shadow-sm text-green-600' : 'text-gray-400'}`}
+              >
+                Grid
+              </button>
+              <button 
+                onClick={() => setViewMode('table')}
+                className={`px-4 py-1.5 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all ${viewMode === 'table' ? 'bg-white shadow-sm text-green-600' : 'text-gray-400'}`}
+              >
+                Table
+              </button>
+            </div>
+          </div>
         </div>
         <button 
           onClick={() => setShowForm(!showForm)}
@@ -244,7 +261,7 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
            <Loader2 className="animate-spin h-16 w-16 text-green-600 mx-auto" />
            <p className="mt-6 font-black uppercase text-xs text-gray-400 tracking-widest">Querying Supabase...</p>
         </div>
-      ) : (
+      ) : viewMode === 'grid' ? (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-12">
           {batches.map((batch, idx) => (
             <div key={batch.id} className={`bg-white rounded-[4rem] border border-gray-100 overflow-hidden shadow-xl hover:shadow-[0_40px_80px_-15px_rgba(0,0,0,0.12)] transition-all duration-700 group animate-spring stagger-${(idx % 4) + 1}`}>
@@ -279,6 +296,48 @@ const FarmerDashboard: React.FC<FarmerDashboardProps> = ({ user, onTrace }) => {
               </div>
             </div>
           ))}
+        </div>
+      ) : (
+        <div className="bg-white rounded-[3rem] border border-gray-100 shadow-xl overflow-hidden animate-spring">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100">
+                  <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-gray-400">Batch ID</th>
+                  <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-gray-400">Crop</th>
+                  <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-gray-400">Quantity</th>
+                  <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-gray-400">Harvest Date</th>
+                  <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-gray-400">GPS Location</th>
+                  <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-gray-400">Status</th>
+                  <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-gray-400 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {batches.map((batch) => (
+                  <tr key={batch.id} className="hover:bg-gray-50/50 transition-colors group">
+                    <td className="px-8 py-6 font-mono text-xs font-black text-gray-900">{batch.id}</td>
+                    <td className="px-8 py-6 font-black text-gray-900 uppercase tracking-tight">{batch.crop}</td>
+                    <td className="px-8 py-6 text-sm font-bold text-gray-700">{batch.quantity}</td>
+                    <td className="px-8 py-6 text-xs text-gray-500">{new Date(batch.harvestDate).toLocaleDateString()}</td>
+                    <td className="px-8 py-6">
+                      <span className="text-[10px] font-mono font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                        {batch.latitude?.toFixed(4)}, {batch.longitude?.toFixed(4)}
+                      </span>
+                    </td>
+                    <td className="px-8 py-6">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-green-600 bg-green-50 px-3 py-1 rounded-full border border-green-100">{batch.status}</span>
+                    </td>
+                    <td className="px-8 py-6 text-right">
+                      <div className="flex justify-end space-x-2">
+                        <button onClick={() => onTrace(batch.id)} className="p-2 text-gray-400 hover:text-green-600 transition-colors"><ShieldCheck size={18} /></button>
+                        <button onClick={() => setSelectedBatchQR(batch)} className="p-2 text-gray-400 hover:text-green-600 transition-colors"><QrCode size={18} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
