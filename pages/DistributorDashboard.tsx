@@ -62,7 +62,7 @@ const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTra
       const parts = text.split('/#trace/');
       if (parts[1]) {
         const id = parts[1].split(/[?#]/)[0];
-        if (id) return id.toUpperCase();
+        if (id && id.length >= 4) return id.toUpperCase();
       }
     }
     
@@ -71,7 +71,7 @@ const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTra
       const parts = text.split('trace=');
       if (parts[1]) {
         const id = parts[1].split(/[&#]/)[0];
-        if (id) return id.toUpperCase();
+        if (id && id.length >= 4) return id.toUpperCase();
       }
     }
 
@@ -86,14 +86,17 @@ const DistributorDashboard: React.FC<DistributorDashboardProps> = ({ user, onTra
         }
         // Also check hash in URL object
         if (url.hash.startsWith('#trace/')) {
-          return url.hash.replace('#trace/', '').toUpperCase();
+          const id = url.hash.replace('#trace/', '');
+          if (id && id.length >= 4) return id.toUpperCase();
         }
       } catch (e) {
         // Not a valid URL, continue to fallback
       }
     }
     
-    return text.trim().toUpperCase();
+    // 5. Final fallback: clean the text and check length
+    const cleaned = text.trim().toUpperCase();
+    return cleaned.length >= 4 ? cleaned : '';
   };
 
   const startScanner = async () => {
